@@ -65,7 +65,17 @@ public class Result<T> {
         result.setMessage(message);
         return result;
     }
-    
+
+    /**
+     * 失败（带自定义错误码）
+     */
+    public static <T> Result<T> error(Integer code, String message) {
+        Result<T> result = new Result<>();
+        result.setCode(code);
+        result.setMessage(message);
+        return result;
+    }
+
     /**
      * 未认证
      */

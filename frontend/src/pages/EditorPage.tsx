@@ -5,8 +5,11 @@ import { Node } from '@xyflow/react';
 import NodePanel from '../components/NodePanel';
 import FlowCanvas from '../components/FlowCanvas';
 import DebugDrawer from '../components/DebugDrawer';
+import SkillSelector from '../components/SkillSelector';
+import LLMConfigModal from '../components/LLMConfigModal';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useAuthStore } from '../store/authStore';
+import { useLLMConfigStore } from '../store/llmConfigStore';
 import { createWorkflow, updateWorkflow, executeWorkflow, getWorkflows, getWorkflow, Workflow } from '../api/workflow';
 import { useNavigate, useParams } from 'react-router-dom';
 
@@ -63,14 +66,19 @@ const EditorPage = () => {
   
   // LLM 节点配置状态
   const [llmConfig, setLlmConfig] = useState({
+    configId: undefined as number | undefined,
     apiUrl: '',
     apiKey: '',
     model: '',
     temperature: 0.7,
-    prompt: ''
+    prompt: '',
+    skillName: ''
   });
   const [llmInputParams, setLlmInputParams] = useState<LlmInputParam[]>([]);
   const [llmOutputParams, setLlmOutputParams] = useState<LlmOutputParam[]>([]);
+
+  // LLM 全局配置 Store
+  const { configs: llmGlobalConfigs, fetchAllConfigs: fetchLLMGlobalConfigs } = useLLMConfigStore();
 
   // TTS 节点配置状态
   const [ttsConfig, setTtsConfig] = useState({
@@ -95,27 +103,33 @@ const EditorPage = () => {
   // 处理节点点击
   const handleNodeClick = (node: Node) => {
     console.log('Node clicked:', node);
-    
+
     // 清理之前的自动保存定时器
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current);
       autoSaveTimerRef.current = null;
     }
-    
+
     useWorkflowStore.getState().setSelectedNode(node);
-    
+
     // 加载节点配置
     if (node.data?.type === 'output') {
       setOutputParams((node.data?.outputParams as OutputParam[]) || []);
       setResponseContent((node.data?.responseContent as string) || '');
     } else if (node.data?.type === 'openai' || node.data?.type === 'deepseek' || node.data?.type === 'qwen') {
       // 加载 LLM 节点配置
+      const configId = (node.data?.configId as number) || undefined;
+      const matchedGlobalConfig = configId
+        ? llmGlobalConfigs.find(c => c.id === configId)
+        : undefined;
       setLlmConfig({
-        apiUrl: (node.data?.apiUrl as string) || '',
-        apiKey: (node.data?.apiKey as string) || '',
-        model: (node.data?.model as string) || '',
-        temperature: (node.data?.temperature as number) || 0.7,
-        prompt: (node.data?.prompt as string) || ''
+        configId,
+        apiUrl: matchedGlobalConfig?.apiUrl || (node.data?.apiUrl as string) || '',
+        apiKey: configId ? '' : (node.data?.apiKey as string) || '',
+        model: matchedGlobalConfig?.model || (node.data?.model as string) || '',
+        temperature: matchedGlobalConfig?.temperature || (node.data?.temperature as number) || 0.7,
+        prompt: (node.data?.prompt as string) || '',
+        skillName: (node.data?.skillName as string) || ''
       });
       setLlmInputParams((node.data?.inputParams as LlmInputParam[]) || []);
       setLlmOutputParams((node.data?.outputParams as LlmOutputParam[]) || []);
@@ -131,6 +145,38 @@ const EditorPage = () => {
       setTtsOutputParams((node.data?.outputParams as TtsOutputParam[]) || []);
     }
   };
+
+  // 初始化加载 LLM 全局配置
+  useEffect(() => {
+    fetchLLMGlobalConfigs();
+  }, []);
+
+  // 当全局配置异步加载完成后，补齐当前选中节点的展示配置
+  useEffect(() => {
+    if (!selectedNode) return;
+    const nodeType = selectedNode.data?.type;
+    if (nodeType !== 'openai' && nodeType !== 'deepseek' && nodeType !== 'qwen') return;
+    if (!llmConfig.configId) return;
+
+    const config = llmGlobalConfigs.find(c => c.id === llmConfig.configId);
+    if (!config) return;
+
+    const needsSync =
+      llmConfig.apiUrl !== config.apiUrl ||
+      llmConfig.model !== config.model ||
+      llmConfig.temperature !== config.temperature ||
+      llmConfig.apiKey !== '';
+
+    if (needsSync) {
+      setLlmConfig(prev => ({
+        ...prev,
+        apiUrl: config.apiUrl,
+        apiKey: '',
+        model: config.model,
+        temperature: config.temperature
+      }));
+    }
+  }, [llmGlobalConfigs, selectedNode, llmConfig]);
 
   // 从 URL 加载工作流
   useEffect(() => {
@@ -484,40 +530,45 @@ const EditorPage = () => {
     const templateParamRegex = /\{\{(\w+)\}\}/g;
     const matches = llmConfig.prompt.matchAll(templateParamRegex);
     const undefinedParams: string[] = [];
-    
+
     for (const match of matches) {
       const paramName = match[1];
       if (!paramNames.has(paramName)) {
         undefinedParams.push(paramName);
       }
     }
-    
+
     if (undefinedParams.length > 0) {
       message.warning(`提示词模板中引用了未定义的参数: ${undefinedParams.join(', ')}`);
       return;
     }
 
-    // 验证 API 配置
-    if (!llmConfig.apiUrl) {
-      message.warning('请填写 API 地址');
-      return;
-    }
-    if (!llmConfig.apiKey) {
-      message.warning('请填写 API 密钥');
-      return;
-    }
-    if (!llmConfig.model) {
-      message.warning('请填写模型名称');
-      return;
+    // 如果没有选择全局配置，需要验证 API 配置
+    if (!llmConfig.configId) {
+      if (!llmConfig.apiUrl) {
+        message.warning('请选择全局配置或填写 API 地址');
+        return;
+      }
+      if (!llmConfig.apiKey) {
+        message.warning('请选择全局配置或填写 API 密钥');
+        return;
+      }
+      if (!llmConfig.model) {
+        message.warning('请选择全局配置或填写模型名称');
+        return;
+      }
     }
 
+    const useGlobalConfig = !!llmConfig.configId;
     const updatedData = {
       ...selectedNode.data,
-      apiUrl: llmConfig.apiUrl,
-      apiKey: llmConfig.apiKey,
-      model: llmConfig.model,
-      temperature: llmConfig.temperature,
+      configId: llmConfig.configId,
+      apiUrl: useGlobalConfig ? '' : llmConfig.apiUrl,
+      apiKey: useGlobalConfig ? '' : llmConfig.apiKey,
+      model: useGlobalConfig ? '' : llmConfig.model,
+      temperature: useGlobalConfig ? 0.7 : llmConfig.temperature,
       prompt: llmConfig.prompt,
+      skillName: llmConfig.skillName,
       inputParams: llmInputParams,
       outputParams: llmOutputParams
     };
@@ -695,35 +746,38 @@ const EditorPage = () => {
     if (!selectedNode) return;
     const nodeType = selectedNode.data?.type;
     if (nodeType !== 'openai' && nodeType !== 'deepseek' && nodeType !== 'qwen') return;
-    
+
     // 清理之前的定时器
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current);
     }
-    
+
     // 设置新的定时器（防抖500ms）
     autoSaveTimerRef.current = setTimeout(() => {
       // 基础验证：至少有基本配置
-      const hasBasicConfig = llmConfig.apiUrl || llmConfig.apiKey || llmConfig.model || llmConfig.prompt;
+      const hasBasicConfig = llmConfig.configId || llmConfig.apiUrl || llmConfig.apiKey || llmConfig.model || llmConfig.prompt;
       const hasParams = llmInputParams.length > 0 || llmOutputParams.length > 0;
-      
+
       if (!hasBasicConfig && !hasParams) return; // 没有任何配置，不保存
-      
+
+      const useGlobalConfig = !!llmConfig.configId;
       const updatedData = {
         ...selectedNode.data,
-        apiUrl: llmConfig.apiUrl,
-        apiKey: llmConfig.apiKey,
-        model: llmConfig.model,
-        temperature: llmConfig.temperature,
+        configId: llmConfig.configId,
+        apiUrl: useGlobalConfig ? '' : llmConfig.apiUrl,
+        apiKey: useGlobalConfig ? '' : llmConfig.apiKey,
+        model: useGlobalConfig ? '' : llmConfig.model,
+        temperature: useGlobalConfig ? 0.7 : llmConfig.temperature,
         prompt: llmConfig.prompt,
+        skillName: llmConfig.skillName,
         inputParams: llmInputParams,
         outputParams: llmOutputParams
       };
-      
+
       useWorkflowStore.getState().updateNode(selectedNode.id, updatedData);
       console.log('LLM节点配置已自动保存');
     }, 500);
-    
+
     // 清理函数
     return () => {
       if (autoSaveTimerRef.current) {
@@ -797,6 +851,7 @@ const EditorPage = () => {
         </div>
         
         <div className="flex items-center gap-3">
+          <LLMConfigModal />
           <Button
             icon={<PlusOutlined />}
             onClick={handleCreateNew}
@@ -1105,8 +1160,8 @@ const EditorPage = () => {
                     </div>
 
                     <Form.Item label="提示词模板" required>
-                      <Input.TextArea 
-                        rows={12} 
+                      <Input.TextArea
+                        rows={12}
                         placeholder="输入提示词模板，使用 {{参数名}} 引用输入参数"
                         value={llmConfig.prompt}
                         onChange={(e) => setLlmConfig({...llmConfig, prompt: e.target.value})}
@@ -1116,38 +1171,114 @@ const EditorPage = () => {
                         💡 使用 {'{{'} 参数名 {'}'} 引用上面定义的输入参数
                       </div>
                     </Form.Item>
-                    <Form.Item label="API 地址" required>
-                      <Input 
-                        placeholder="例如: https://api.deepseek.com"
-                        value={llmConfig.apiUrl}
-                        onChange={(e) => setLlmConfig({...llmConfig, apiUrl: e.target.value})}
-                      />
+
+                    {/* 全局配置选择 */}
+                    <Form.Item
+                      label="全局配置"
+                      required={!llmConfig.configId && !llmConfig.apiUrl}
+                    >
+                      <Select
+                        value={llmConfig.configId}
+                        onChange={(value) => {
+                          if (value) {
+                            const config = llmGlobalConfigs.find(c => c.id === value);
+                            if (config) {
+                              setLlmConfig({
+                                ...llmConfig,
+                                configId: value,
+                                apiUrl: config.apiUrl,
+                                apiKey: '',
+                                model: config.model,
+                                temperature: config.temperature
+                              });
+                            }
+                          } else {
+                            setLlmConfig({
+                              ...llmConfig,
+                              configId: undefined,
+                              apiUrl: '',
+                              apiKey: '',
+                              model: '',
+                              temperature: 0.7
+                            });
+                          }
+                        }}
+                        placeholder="选择一个全局配置"
+                        allowClear
+                      >
+                        {llmGlobalConfigs
+                          .filter(c => c.provider === selectedNode.data?.type)
+                          .map(config => (
+                            <Select.Option key={config.id} value={config.id}>
+                              {config.configName} {config.isDefault === 1 ? '(默认)' : ''}
+                            </Select.Option>
+                          ))}
+                      </Select>
+                      <div className="text-xs text-gray-500 mt-1">
+                        💡 选择全局配置后无需填写下方 API 信息
+                      </div>
                     </Form.Item>
-                    <Form.Item label="API 密钥" required>
-                      <Input.Password 
-                        placeholder="输入 API Key"
-                        value={llmConfig.apiKey}
-                        onChange={(e) => setLlmConfig({...llmConfig, apiKey: e.target.value})}
-                      />
-                    </Form.Item>
-                    <Form.Item label="模型名称" required>
-                      <Input 
-                        placeholder="例如: deepseek-chat"
-                        value={llmConfig.model}
-                        onChange={(e) => setLlmConfig({...llmConfig, model: e.target.value})}
-                      />
-                    </Form.Item>
-                    <Form.Item label="温度">
-                      <Input 
-                        type="number" 
-                        step="0.1" 
-                        min="0" 
-                        max="2"
-                        value={llmConfig.temperature}
-                        onChange={(e) => setLlmConfig({...llmConfig, temperature: parseFloat(e.target.value) || 0.7})}
+
+                    {/* API 配置（未选择全局配置时显示） */}
+                    {!llmConfig.configId && (
+                      <>
+                        <div className="text-xs text-orange-500 mb-2 px-2 py-1 bg-orange-50 rounded">
+                          ⚠️ 未选择全局配置，请手动填写以下 API 信息
+                        </div>
+                        <Form.Item label="API 地址" required>
+                          <Input
+                            placeholder="例如: https://api.deepseek.com"
+                            value={llmConfig.apiUrl}
+                            onChange={(e) => setLlmConfig({...llmConfig, apiUrl: e.target.value})}
+                          />
+                        </Form.Item>
+                        <Form.Item label="API 密钥" required>
+                          <Input.Password
+                            placeholder="输入 API Key"
+                            value={llmConfig.apiKey}
+                            onChange={(e) => setLlmConfig({...llmConfig, apiKey: e.target.value})}
+                          />
+                        </Form.Item>
+                        <Form.Item label="模型名称" required>
+                          <Input
+                            placeholder="例如: deepseek-chat"
+                            value={llmConfig.model}
+                            onChange={(e) => setLlmConfig({...llmConfig, model: e.target.value})}
+                          />
+                        </Form.Item>
+                        <Form.Item label="温度">
+                          <Input
+                            type="number"
+                            step="0.1"
+                            min="0"
+                            max="2"
+                            value={llmConfig.temperature}
+                            onChange={(e) => setLlmConfig({...llmConfig, temperature: parseFloat(e.target.value) || 0.7})}
+                          />
+                          <div className="text-xs text-gray-500 mt-1">
+                            控制输出随机性，范围 0-2，值越高越随机
+                          </div>
+                        </Form.Item>
+                      </>
+                    )}
+
+                    {/* 已选择全局配置时显示配置信息 */}
+                    {llmConfig.configId && (
+                      <div className="text-xs text-gray-500 mb-4 p-3 bg-gray-50 rounded">
+                        <div className="font-medium mb-2">当前使用全局配置：</div>
+                        <div>API 地址: {llmConfig.apiUrl}</div>
+                        <div>模型: {llmConfig.model}</div>
+                        <div>温度: {llmConfig.temperature}</div>
+                      </div>
+                    )}
+
+                    <Form.Item label="技能 (Skill)">
+                      <SkillSelector
+                        value={llmConfig.skillName}
+                        onChange={(value) => setLlmConfig({...llmConfig, skillName: value || ''})}
                       />
                       <div className="text-xs text-gray-500 mt-1">
-                        控制输出随机性，范围 0-2，值越高越随机
+                        选择一个技能来增强 LLM 的能力，LLM 会自动获取技能指南
                       </div>
                     </Form.Item>
                     <Button type="primary" block onClick={handleSaveLlmConfig}>

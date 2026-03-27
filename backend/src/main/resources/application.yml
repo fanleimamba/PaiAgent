@@ -53,3 +53,8 @@ minio:
   secretKey: minioadmin
   bucketName: paiagent
   publicUrl: http://localhost:9000
+
+# PaiAgent 配置
+paiagent:
+  skills:
+    path: skills

@@ -6,13 +6,25 @@ import com.paiagent.engine.llm.ChatClientFactory;
 import com.paiagent.engine.llm.LLMNodeConfig;
 import com.paiagent.engine.llm.PromptTemplateService;
 import com.paiagent.engine.model.WorkflowNode;
+import com.paiagent.engine.skill.Skill;
+import com.paiagent.engine.skill.SkillRegistry;
+import com.paiagent.entity.LLMGlobalConfig;
+import com.paiagent.service.LLMGlobalConfigService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
+import org.springframework.ai.chat.messages.Message;
+import org.springframework.ai.chat.messages.SystemMessage;
+import org.springframework.ai.chat.messages.UserMessage;
+import org.springframework.ai.chat.model.ChatResponse;
+import org.springframework.ai.chat.prompt.Prompt;
+import org.springframework.ai.model.function.FunctionCallback;
 import org.springframework.beans.factory.annotation.Autowired;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.Consumer;
 
 /**
@@ -21,12 +33,23 @@ import java.util.function.Consumer;
  */
 @Slf4j
 public abstract class AbstractLLMNodeExecutor implements NodeExecutor {
-    
+
     @Autowired
     protected ChatClientFactory chatClientFactory;
-    
+
     @Autowired
     protected PromptTemplateService promptTemplateService;
+
+    @Autowired
+    protected SkillRegistry skillRegistry;
+
+    @Autowired
+    protected LLMGlobalConfigService llmGlobalConfigService;
+
+    /**
+     * 最大函数调用迭代次数
+     */
+    private static final int MAX_FUNCTION_ITERATIONS = 5;
     
     /**
      * 获取节点类型标识
@@ -39,53 +62,165 @@ public abstract class AbstractLLMNodeExecutor implements NodeExecutor {
     }
     
     @Override
-    public Map<String, Object> execute(WorkflowNode node, Map<String, Object> input, 
+    public Map<String, Object> execute(WorkflowNode node, Map<String, Object> input,
                                        Consumer<ExecutionEvent> progressCallback) throws Exception {
         // 1. 提取节点配置
         LLMNodeConfig config = extractConfig(node);
-        
-        log.info("{} 节点配置 - API: {}, Model: {}, Temperature: {}", 
-                getNodeType().toUpperCase(), config.getApiUrl(), config.getModel(), config.getTemperature());
+        validateResolvedConfig(config);
+
+        log.info("{} 节点配置 - API: {}, Model: {}, Temperature: {}, Skill: {}",
+                getNodeType().toUpperCase(), config.getApiUrl(), config.getModel(),
+                config.getTemperature(), config.getSkillName());
         log.info("{} 输入参数配置: {}", getNodeType().toUpperCase(), config.getInputParams());
         log.info("{} 输入数据: {}", getNodeType().toUpperCase(), input);
-        
-        // 2. 处理prompt模板
-        String finalPrompt = promptTemplateService.processTemplate(
-                config.getPromptTemplate(), 
-                config.getInputParams(), 
+
+        // 2. 获取关联的 Skill（如果有）
+        Optional<Skill> skill = Optional.empty();
+        Map<String, String> skillReferences = new HashMap<>();
+        List<FunctionCallback> functions = new ArrayList<>();
+
+        if (config.getSkillName() != null && !config.getSkillName().isBlank()) {
+            skill = skillRegistry.getSkill(config.getSkillName());
+            if (skill.isPresent()) {
+                log.info("{} 关联 Skill: {}", getNodeType().toUpperCase(), skill.get().getName());
+
+                // 直接加载所有 references，打包进 Prompt
+                skillReferences = skillRegistry.loadAllReferences(config.getSkillName());
+                log.info("{} 加载了 {} 个 reference 文件", getNodeType().toUpperCase(), skillReferences.size());
+
+                // 不再需要注册函数，直接打包所有内容
+                // functions.add(new LoadSkillDetailFunction(skillRegistry));
+                // functions.add(new LoadSkillReferenceFunction(skillRegistry));
+            } else {
+                log.warn("{} 未找到 Skill: {}", getNodeType().toUpperCase(), config.getSkillName());
+            }
+        }
+
+        // 3. 构建系统提示（直接包含所有 Skill 内容）
+        String systemPrompt = buildSystemPrompt(skill, skillReferences);
+
+        // 4. 处理 prompt 模板
+        String userPrompt = promptTemplateService.processTemplate(
+                config.getPromptTemplate(),
+                config.getInputParams(),
                 input
         );
-        log.info("最终提示词: {}", finalPrompt);
-        
-        // 3. 创建ChatClient
-        ChatClient chatClient = chatClientFactory.createClient(
+        log.info("最终提示词: {}", userPrompt);
+
+        // 5. 创建 ChatClient（带或不带 Functions）
+        ChatClient chatClient = chatClientFactory.createClientWithFunctions(
                 getNodeType(),
                 config.getApiUrl(),
                 config.getApiKey(),
                 config.getModel(),
-                config.getTemperature()
+                config.getTemperature(),
+                functions
         );
-        
-        // 4. 调用LLM（支持流式和非流式）
+
+        // 6. 调用 LLM（支持函数调用循环）
         LLMResponse llmResponse;
         if (config.isStreaming() && progressCallback != null) {
-            llmResponse = executeStreaming(chatClient, finalPrompt, node, progressCallback);
+            // 流式模式暂不支持函数调用
+            llmResponse = executeStreaming(chatClient, systemPrompt, userPrompt, node, progressCallback);
+        } else if (!functions.isEmpty()) {
+            // 带 Function Calling 的执行
+            llmResponse = executeWithFunctions(chatClient, systemPrompt, userPrompt, functions);
         } else {
-            llmResponse = executeNormal(chatClient, finalPrompt);
+            // 普通执行
+            llmResponse = executeNormal(chatClient, systemPrompt, userPrompt);
         }
-        
+
         log.info("{} API响应: {}", getNodeType().toUpperCase(), llmResponse.getContent());
-        log.info("{} Token统计: 输入={}, 输出={}, 总计={}", 
-                getNodeType().toUpperCase(), 
+        log.info("{} Token统计: 输入={}, 输出={}, 总计={}",
+                getNodeType().toUpperCase(),
                 llmResponse.getInputTokens(),
                 llmResponse.getOutputTokens(),
                 llmResponse.getTotalTokens());
-        
-        // 5. 构建输出
+
+        // 7. 构建输出
         Map<String, Object> output = buildOutput(llmResponse, config.getOutputParams());
         log.info("{} 节点输出: {}", getNodeType().toUpperCase(), output);
-        
+
         return output;
+    }
+
+    /**
+     * 构建系统提示（直接包含所有 Skill 内容和 references）
+     */
+    private String buildSystemPrompt(Optional<Skill> skill, Map<String, String> references) {
+        StringBuilder sb = new StringBuilder();
+
+        if (skill.isPresent()) {
+            // 直接使用完整的执行 Prompt，包含所有 references
+            sb.append(skill.get().getFullExecutionPrompt(references));
+            sb.append("\n\n---\n\n");
+            log.info("{} 系统 Prompt 已包含 Skill 完整内容和 {} 个 reference 文件",
+                    getNodeType().toUpperCase(), references.size());
+        }
+
+        return sb.toString();
+    }
+
+    /**
+     * 带函数调用的执行（支持多轮对话）
+     */
+    private LLMResponse executeWithFunctions(ChatClient chatClient, String systemPrompt,
+                                             String userPrompt, List<FunctionCallback> functions) {
+        List<Message> messages = new ArrayList<>();
+
+        // 添加系统提示（Skills 放在系统提示词中）
+        if (systemPrompt != null && !systemPrompt.isBlank()) {
+            messages.add(new SystemMessage(systemPrompt));
+        }
+
+        // 添加用户消息
+        messages.add(new UserMessage(userPrompt));
+
+        int iterations = 0;
+
+        while (iterations < MAX_FUNCTION_ITERATIONS) {
+            // 创建带函数的 Prompt
+            Prompt prompt = new Prompt(messages);
+
+            // 调用 LLM - 函数已在 ChatClient 构建时注册，无需再次指定
+            ChatResponse chatResponse = chatClient.prompt(prompt)
+                    .call()
+                    .chatResponse();
+
+            String content = chatResponse.getResult().getOutput().getContent();
+
+            // 检查是否有函数调用请求（通过检查响应中的 tool calls）
+            // Spring AI 会自动处理函数调用，我们只需要检查是否需要继续
+            if (content != null && !content.isBlank()) {
+                // 提取 token 统计
+                return extractLLMResponse(chatResponse, content);
+            }
+
+            iterations++;
+            log.debug("Function call iteration: {}", iterations);
+        }
+
+        // 超过最大迭代次数，返回空响应
+        return new LLMResponse("达到最大函数调用次数限制", null, null, null);
+    }
+
+    /**
+     * 从 ChatResponse 提取 LLMResponse
+     */
+    private LLMResponse extractLLMResponse(ChatResponse chatResponse, String content) {
+        var metadata = chatResponse.getMetadata();
+        Integer inputTokens = null;
+        Integer outputTokens = null;
+        Integer totalTokens = null;
+
+        if (metadata != null && metadata.getUsage() != null) {
+            var usage = metadata.getUsage();
+            inputTokens = usage.getPromptTokens() != null ? usage.getPromptTokens().intValue() : null;
+            outputTokens = usage.getGenerationTokens() != null ? usage.getGenerationTokens().intValue() : null;
+            totalTokens = usage.getTotalTokens() != null ? usage.getTotalTokens().intValue() : null;
+        }
+
+        return new LLMResponse(content, inputTokens, outputTokens, totalTokens);
     }
     
     /**
@@ -113,40 +248,52 @@ public abstract class AbstractLLMNodeExecutor implements NodeExecutor {
     /**
      * 普通（非流式）调用
      */
-    private LLMResponse executeNormal(ChatClient chatClient, String prompt) {
-        var chatResponse = chatClient.prompt()
-                .user(prompt)
+    private LLMResponse executeNormal(ChatClient chatClient, String systemPrompt, String userPrompt) {
+        var promptBuilder = chatClient.prompt();
+
+        if (systemPrompt != null && !systemPrompt.isBlank()) {
+            promptBuilder.system(systemPrompt);
+        }
+
+        var chatResponse = promptBuilder
+                .user(userPrompt)
                 .call()
                 .chatResponse();
-        
+
         String content = chatResponse.getResult().getOutput().getContent();
-        
+
         // 提取token统计
         var metadata = chatResponse.getMetadata();
         Integer inputTokens = null;
         Integer outputTokens = null;
         Integer totalTokens = null;
-        
+
         if (metadata != null && metadata.getUsage() != null) {
             var usage = metadata.getUsage();
             inputTokens = usage.getPromptTokens() != null ? usage.getPromptTokens().intValue() : null;
             outputTokens = usage.getGenerationTokens() != null ? usage.getGenerationTokens().intValue() : null;
             totalTokens = usage.getTotalTokens() != null ? usage.getTotalTokens().intValue() : null;
         }
-        
+
         return new LLMResponse(content, inputTokens, outputTokens, totalTokens);
     }
     
     /**
      * 流式调用
      */
-    private LLMResponse executeStreaming(ChatClient chatClient, String prompt, 
-                                    WorkflowNode node, Consumer<ExecutionEvent> progressCallback) {
+    private LLMResponse executeStreaming(ChatClient chatClient, String systemPrompt, String userPrompt,
+                                         WorkflowNode node, Consumer<ExecutionEvent> progressCallback) {
         StringBuilder accumulated = new StringBuilder();
-        
+
+        var promptBuilder = chatClient.prompt();
+
+        if (systemPrompt != null && !systemPrompt.isBlank()) {
+            promptBuilder.system(systemPrompt);
+        }
+
         // 注意：流式调用时无法获取token统计，因为metadata在流式模式下不可用
-        chatClient.prompt()
-                .user(prompt)
+        promptBuilder
+                .user(userPrompt)
                 .stream()
                 .content()
                 .doOnNext(chunk -> {
@@ -162,7 +309,7 @@ public abstract class AbstractLLMNodeExecutor implements NodeExecutor {
                     }
                 })
                 .blockLast();
-        
+
         // 流式调用无token统计
         return new LLMResponse(accumulated.toString(), null, null, null);
     }
@@ -173,20 +320,61 @@ public abstract class AbstractLLMNodeExecutor implements NodeExecutor {
     @SuppressWarnings("unchecked")
     protected LLMNodeConfig extractConfig(WorkflowNode node) {
         Map<String, Object> data = node.getData();
-        
+
         LLMNodeConfig config = new LLMNodeConfig();
-        config.setApiUrl(trimString(data.get("apiUrl")));
-        config.setApiKey(trimString(data.get("apiKey")));
-        config.setModel(trimString(data.get("model")));
-        config.setTemperature(data.get("temperature") != null 
-                ? ((Number) data.get("temperature")).doubleValue() 
-                : 0.7);
+
+        // 优先使用全局配置
+        Long configId = data.get("configId") != null
+                ? ((Number) data.get("configId")).longValue()
+                : null;
+
+        if (configId != null) {
+            LLMGlobalConfig globalConfig = llmGlobalConfigService.getById(configId);
+            if (globalConfig != null) {
+                config.setApiUrl(globalConfig.getApiUrl());
+                config.setApiKey(globalConfig.getApiKey());
+                config.setModel(globalConfig.getModel());
+                config.setTemperature(globalConfig.getTemperature() != null
+                        ? globalConfig.getTemperature().doubleValue()
+                        : 0.7);
+                log.info("{} 使用全局配置: {}", getNodeType().toUpperCase(), globalConfig.getConfigName());
+            } else {
+                log.warn("{} 全局配置不存在: {}", getNodeType().toUpperCase(), configId);
+                applyNodeLevelConfig(config, data);
+            }
+        } else {
+            applyNodeLevelConfig(config, data);
+        }
+
+        config.setConfigId(configId);
         config.setPromptTemplate((String) data.get("prompt"));
         config.setInputParams((List<Map<String, Object>>) data.get("inputParams"));
         config.setOutputParams((List<Map<String, Object>>) data.get("outputParams"));
         config.setStreaming(Boolean.TRUE.equals(data.get("streaming")));
-        
+        config.setSkillName(trimString(data.get("skillName")));
+
         return config;
+    }
+
+    private void applyNodeLevelConfig(LLMNodeConfig config, Map<String, Object> data) {
+        config.setApiUrl(trimString(data.get("apiUrl")));
+        config.setApiKey(trimString(data.get("apiKey")));
+        config.setModel(trimString(data.get("model")));
+        config.setTemperature(data.get("temperature") != null
+                ? ((Number) data.get("temperature")).doubleValue()
+                : 0.7);
+    }
+
+    private void validateResolvedConfig(LLMNodeConfig config) {
+        if (isBlank(config.getApiUrl()) || isBlank(config.getApiKey()) || isBlank(config.getModel())) {
+            throw new IllegalArgumentException(
+                    String.format("%s 节点缺少有效的模型配置，请检查全局配置或节点配置", getNodeType().toUpperCase())
+            );
+        }
+    }
+
+    private boolean isBlank(String value) {
+        return value == null || value.isBlank();
     }
     
     /**

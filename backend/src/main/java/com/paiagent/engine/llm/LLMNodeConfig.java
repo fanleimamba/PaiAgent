@@ -50,4 +50,14 @@ public class LLMNodeConfig {
      * 是否启用流式输出
      */
     private boolean streaming;
+
+    /**
+     * 关联的 Skill 名称
+     */
+    private String skillName;
+
+    /**
+     * 全局配置 ID
+     */
+    private Long configId;
 }

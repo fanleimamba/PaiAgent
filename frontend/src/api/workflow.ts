@@ -161,7 +161,7 @@ export const executeWorkflowStream = (
     onError(new Error(event.message || '执行失败'));
   });
   
-  eventSource.onerror = (e) => {
+  eventSource.onerror = () => {
     eventSource.close();
     
     if (!hasReceivedData) {

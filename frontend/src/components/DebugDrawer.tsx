@@ -32,7 +32,7 @@ interface DebugDrawerProps {
   onExecute: (inputData: string) => Promise<ExecutionResponse>;
 }
 
-const DebugDrawer = ({ open, onClose, onExecute }: DebugDrawerProps) => {
+const DebugDrawer = ({ open, onClose, onExecute: _onExecute }: DebugDrawerProps) => {
   const [inputData, setInputData] = useState('');
   const [executing, setExecuting] = useState(false);
   const [executionResult, setExecutionResult] = useState<ExecutionResponse | null>(null);

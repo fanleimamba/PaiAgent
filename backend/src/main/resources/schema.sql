@@ -81,3 +81,21 @@ INSERT INTO node_definition (node_type, display_name, category, icon, input_sche
  '{"type": "object", "properties": {"text": {"type": "string"}}}',
  '{"type": "object", "properties": {"audioUrl": {"type": "string"}, "duration": {"type": "number"}, "fileSize": {"type": "number"}}}',
  '{"type": "object", "properties": {"apiKey": {"type": "string"}, "voice": {"type": "string", "default": "female"}, "speed": {"type": "number", "default": 1.0}, "volume": {"type": "number", "default": 80}}}');
+
+-- 全局 LLM 配置表
+CREATE TABLE IF NOT EXISTS llm_global_config (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '配置主键 ID',
+    provider VARCHAR(50) NOT NULL COMMENT '提供商: openai/deepseek/qwen',
+    config_name VARCHAR(100) NOT NULL COMMENT '配置名称',
+    api_url VARCHAR(255) NOT NULL COMMENT 'API地址',
+    api_key TEXT NOT NULL COMMENT 'API密钥',
+    model VARCHAR(100) NOT NULL COMMENT '默认模型',
+    temperature DECIMAL(3,2) DEFAULT 0.7 COMMENT '默认温度',
+    is_default TINYINT DEFAULT 0 COMMENT '是否默认配置(0-否,1-是)',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    deleted TINYINT DEFAULT 0 COMMENT '逻辑删除标识(0-未删除,1-已删除)',
+    UNIQUE KEY uk_provider_config_name (provider, config_name),
+    INDEX idx_provider (provider),
+    INDEX idx_is_default (is_default)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='全局LLM配置表';
