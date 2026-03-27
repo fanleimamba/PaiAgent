@@ -6,6 +6,9 @@ AI Agent 流图执行面板后端服务
 
 - Java 21
 - Spring Boot 3.4.1
+- Spring AI 1.0.0-M5
+- Spring AI Alibaba 1.0.0.2
+- LangGraph4j Core 1.1.5 + Spring AI 1.8.0-beta3
 - MyBatis-Plus 3.5.5
 - MySQL 8.0
 - Maven 3.8+
@@ -59,6 +62,12 @@ spring:
 - POST /api/auth/logout - 用户登出
 - GET /api/auth/current - 获取当前用户信息
 
+### Skills 接口
+
+- GET /api/skills - 获取所有技能摘要
+- GET /api/skills/{name} - 获取技能详情
+- GET /api/skills/{name}/references/{ref} - 获取技能引用文档
+
 ## 项目结构
 
 ```
@@ -67,6 +76,13 @@ src/main/java/com/paiagent/
 ├── config/           # 配置类
 ├── controller/       # 控制器
 ├── dto/              # 数据传输对象
+├── engine/           # 核心引擎
+│   ├── dag/          # DAG 工作流引擎
+│   ├── langgraph/    # LangGraph4j 状态图引擎
+│   ├── skill/        # Skills 技能系统
+│   ├── llm/          # LLM 调用层
+│   ├── executor/     # 节点执行器
+│   └── model/        # 数据模型
 ├── entity/           # 实体类
 ├── interceptor/      # 拦截器
 ├── mapper/           # MyBatis Mapper
