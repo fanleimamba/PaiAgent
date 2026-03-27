@@ -297,8 +297,9 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
               name="apiUrl"
               label="API 地址"
               rules={[{ required: true, message: '请输入 API 地址' }]}
+              extra="填写兼容接口的根地址，不要追加 /v1 或 /v1/chat/completions。例如 OpenAI: https://api.openai.com，DeepSeek: https://api.deepseek.com，Qwen: https://dashscope.aliyuncs.com/compatible-mode"
             >
-              <Input placeholder="例如: https://api.openai.com/v1" />
+              <Input placeholder="例如: https://api.openai.com" />
             </Form.Item>
 
             <Form.Item

@@ -1227,10 +1227,13 @@ const EditorPage = () => {
                         </div>
                         <Form.Item label="API 地址" required>
                           <Input
-                            placeholder="例如: https://api.deepseek.com"
+                            placeholder="例如: https://dashscope.aliyuncs.com/compatible-mode"
                             value={llmConfig.apiUrl}
                             onChange={(e) => setLlmConfig({...llmConfig, apiUrl: e.target.value})}
                           />
+                          <div className="text-xs text-gray-500 mt-1">
+                            填写兼容接口根地址，不要追加 <code>/v1</code> 或 <code>/v1/chat/completions</code>
+                          </div>
                         </Form.Item>
                         <Form.Item label="API 密钥" required>
                           <Input.Password
