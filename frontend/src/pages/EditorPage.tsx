@@ -7,10 +7,19 @@ import FlowCanvas from '../components/FlowCanvas';
 import DebugDrawer from '../components/DebugDrawer';
 import SkillSelector from '../components/SkillSelector';
 import LLMConfigModal from '../components/LLMConfigModal';
+import { logout } from '../api/auth';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useAuthStore } from '../store/authStore';
 import { useLLMConfigStore } from '../store/llmConfigStore';
 import { createWorkflow, updateWorkflow, executeWorkflow, getWorkflows, getWorkflow, Workflow } from '../api/workflow';
+import { getRefreshToken } from '../utils/auth';
+import {
+  getProviderFromNodeType,
+  getProviderLabel,
+  getSupportedProviderOptions,
+  isLlmNodeType,
+  normalizeProviderKey,
+} from '../utils/provider';
 import { useNavigate, useParams } from 'react-router-dom';
 
 interface OutputParam {
@@ -66,6 +75,7 @@ const EditorPage = () => {
   
   // LLM 节点配置状态
   const [llmConfig, setLlmConfig] = useState({
+    provider: '',
     configId: undefined as number | undefined,
     apiUrl: '',
     apiKey: '',
@@ -79,6 +89,7 @@ const EditorPage = () => {
 
   // LLM 全局配置 Store
   const { configs: llmGlobalConfigs, fetchAllConfigs: fetchLLMGlobalConfigs } = useLLMConfigStore();
+  const providerOptions = getSupportedProviderOptions();
 
   // TTS 节点配置状态
   const [ttsConfig, setTtsConfig] = useState({
@@ -92,6 +103,19 @@ const EditorPage = () => {
 
   // 自动保存定时器
   const autoSaveTimerRef = useRef<number | null>(null);
+
+  const resolveSelectedNodeProvider = (node: Node | null) => {
+    if (!node) {
+      return '';
+    }
+
+    const configuredProvider = normalizeProviderKey(String(node.data?.provider || ''));
+    if (configuredProvider) {
+      return configuredProvider;
+    }
+
+    return getProviderFromNodeType(String(node.data?.type || ''));
+  };
 
   // 处理节点拖拽开始
   const handleDragStart = (event: React.DragEvent, nodeType: string, displayName: string) => {
@@ -116,13 +140,19 @@ const EditorPage = () => {
     if (node.data?.type === 'output') {
       setOutputParams((node.data?.outputParams as OutputParam[]) || []);
       setResponseContent((node.data?.responseContent as string) || '');
-    } else if (node.data?.type === 'openai' || node.data?.type === 'deepseek' || node.data?.type === 'qwen') {
+    } else if (isLlmNodeType(String(node.data?.type || ''))) {
       // 加载 LLM 节点配置
       const configId = (node.data?.configId as number) || undefined;
       const matchedGlobalConfig = configId
         ? llmGlobalConfigs.find(c => c.id === configId)
         : undefined;
+      const provider = normalizeProviderKey(
+        matchedGlobalConfig?.provider ||
+        String(node.data?.provider || '') ||
+        getProviderFromNodeType(String(node.data?.type || ''))
+      );
       setLlmConfig({
+        provider,
         configId,
         apiUrl: matchedGlobalConfig?.apiUrl || (node.data?.apiUrl as string) || '',
         apiKey: configId ? '' : (node.data?.apiKey as string) || '',
@@ -155,7 +185,7 @@ const EditorPage = () => {
   useEffect(() => {
     if (!selectedNode) return;
     const nodeType = selectedNode.data?.type;
-    if (nodeType !== 'openai' && nodeType !== 'deepseek' && nodeType !== 'qwen') return;
+    if (!isLlmNodeType(String(nodeType || ''))) return;
     if (!llmConfig.configId) return;
 
     const config = llmGlobalConfigs.find(c => c.id === llmConfig.configId);
@@ -170,6 +200,7 @@ const EditorPage = () => {
     if (needsSync) {
       setLlmConfig(prev => ({
         ...prev,
+        provider: normalizeProviderKey(config.provider),
         apiUrl: config.apiUrl,
         apiKey: '',
         model: config.model,
@@ -323,7 +354,15 @@ const EditorPage = () => {
   };
 
   // 登出
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    const refreshToken = getRefreshToken();
+    if (refreshToken) {
+      try {
+        await logout({ refreshToken });
+      } catch {
+        // 后端退出失败不阻塞本地登出
+      }
+    }
     clearAuth();
     navigate('/login');
   };
@@ -357,9 +396,13 @@ const EditorPage = () => {
     switch (nodeType) {
       case 'input':
         return ['user_input'];
+      case 'llm':
       case 'openai':
       case 'deepseek':
       case 'qwen':
+      case 'step':
+      case 'zhipu':
+      case 'ai_ping':
         return ['output', 'tokens'];
       case 'tts':
         return ['audioUrl', 'fileName', 'output'];
@@ -545,6 +588,10 @@ const EditorPage = () => {
 
     // 如果没有选择全局配置，需要验证 API 配置
     if (!llmConfig.configId) {
+      if (!llmConfig.provider) {
+        message.warning('请选择供应商');
+        return;
+      }
       if (!llmConfig.apiUrl) {
         message.warning('请选择全局配置或填写 API 地址');
         return;
@@ -562,6 +609,7 @@ const EditorPage = () => {
     const useGlobalConfig = !!llmConfig.configId;
     const updatedData = {
       ...selectedNode.data,
+      provider: llmConfig.provider,
       configId: llmConfig.configId,
       apiUrl: useGlobalConfig ? '' : llmConfig.apiUrl,
       apiKey: useGlobalConfig ? '' : llmConfig.apiKey,
@@ -745,7 +793,7 @@ const EditorPage = () => {
   useEffect(() => {
     if (!selectedNode) return;
     const nodeType = selectedNode.data?.type;
-    if (nodeType !== 'openai' && nodeType !== 'deepseek' && nodeType !== 'qwen') return;
+    if (!isLlmNodeType(String(nodeType || ''))) return;
 
     // 清理之前的定时器
     if (autoSaveTimerRef.current) {
@@ -763,6 +811,7 @@ const EditorPage = () => {
       const useGlobalConfig = !!llmConfig.configId;
       const updatedData = {
         ...selectedNode.data,
+        provider: llmConfig.provider,
         configId: llmConfig.configId,
         apiUrl: useGlobalConfig ? '' : llmConfig.apiUrl,
         apiKey: useGlobalConfig ? '' : llmConfig.apiKey,
@@ -824,6 +873,15 @@ const EditorPage = () => {
       }
     };
   }, [ttsConfig, ttsInputParams, ttsOutputParams, selectedNode]);
+
+  const selectedNodeType = String(selectedNode?.data?.type || '');
+  const isGenericLlmNode = selectedNodeType === 'llm';
+  const selectedNodeProvider = resolveSelectedNodeProvider(selectedNode);
+  const availableLlmConfigs = isGenericLlmNode
+    ? llmGlobalConfigs
+    : llmGlobalConfigs.filter(
+        (config) => normalizeProviderKey(config.provider) === selectedNodeProvider
+      );
 
   return (
     <div className="h-screen flex flex-col bg-gray-50">
@@ -1036,8 +1094,8 @@ const EditorPage = () => {
                   </Form>
                 )}
 
-                {/* LLM 节点配置 (OpenAI/DeepSeek/Qwen) */}
-                {(selectedNode.data?.type === 'openai' || selectedNode.data?.type === 'deepseek' || selectedNode.data?.type === 'qwen') && (
+                {/* LLM 节点配置 */}
+                {isLlmNodeType(selectedNodeType) && (
                   <Form layout="vertical" className="mt-4">
                     {/* 输入参数配置 */}
                     <div className="mb-6">
@@ -1185,6 +1243,7 @@ const EditorPage = () => {
                             if (config) {
                               setLlmConfig({
                                 ...llmConfig,
+                                provider: normalizeProviderKey(config.provider),
                                 configId: value,
                                 apiUrl: config.apiUrl,
                                 apiKey: '',
@@ -1195,6 +1254,7 @@ const EditorPage = () => {
                           } else {
                             setLlmConfig({
                               ...llmConfig,
+                              provider: isGenericLlmNode ? '' : selectedNodeProvider,
                               configId: undefined,
                               apiUrl: '',
                               apiKey: '',
@@ -1206,11 +1266,10 @@ const EditorPage = () => {
                         placeholder="选择一个全局配置"
                         allowClear
                       >
-                        {llmGlobalConfigs
-                          .filter(c => c.provider === selectedNode.data?.type)
-                          .map(config => (
+                        {availableLlmConfigs.map(config => (
                             <Select.Option key={config.id} value={config.id}>
-                              {config.configName} {config.isDefault === 1 ? '(默认)' : ''}
+                              {isGenericLlmNode ? `${getProviderLabel(config.provider)} / ` : ''}
+                              {config.configName} {config.isDefault === 1 ? '(该供应商默认)' : ''}
                             </Select.Option>
                           ))}
                       </Select>
@@ -1222,6 +1281,16 @@ const EditorPage = () => {
                     {/* API 配置（未选择全局配置时显示） */}
                     {!llmConfig.configId && (
                       <>
+                        {isGenericLlmNode && (
+                          <Form.Item label="供应商" required>
+                            <Select
+                              value={llmConfig.provider || undefined}
+                              placeholder="选择这条节点配置要使用的供应商"
+                              options={providerOptions}
+                              onChange={(value) => setLlmConfig({ ...llmConfig, provider: value })}
+                            />
+                          </Form.Item>
+                        )}
                         <div className="text-xs text-orange-500 mb-2 px-2 py-1 bg-orange-50 rounded">
                           ⚠️ 未选择全局配置，请手动填写以下 API 信息
                         </div>
@@ -1244,7 +1313,7 @@ const EditorPage = () => {
                         </Form.Item>
                         <Form.Item label="模型名称" required>
                           <Input
-                            placeholder="例如: deepseek-chat"
+                            placeholder="例如: deepseek-chat, claude-3-5-sonnet-20241022"
                             value={llmConfig.model}
                             onChange={(e) => setLlmConfig({...llmConfig, model: e.target.value})}
                           />
@@ -1269,6 +1338,7 @@ const EditorPage = () => {
                     {llmConfig.configId && (
                       <div className="text-xs text-gray-500 mb-4 p-3 bg-gray-50 rounded">
                         <div className="font-medium mb-2">当前使用全局配置：</div>
+                        <div>供应商: {getProviderLabel(llmConfig.provider)}</div>
                         <div>API 地址: {llmConfig.apiUrl}</div>
                         <div>模型: {llmConfig.model}</div>
                         <div>温度: {llmConfig.temperature}</div>
@@ -1469,11 +1539,9 @@ const EditorPage = () => {
                 )}
 
                 {/* 其他节点配置 */}
-                {selectedNode.data?.type !== 'input' && 
-                 selectedNode.data?.type !== 'output' && 
-                 selectedNode.data?.type !== 'openai' && 
-                 selectedNode.data?.type !== 'deepseek' && 
-                 selectedNode.data?.type !== 'qwen' && 
+                {selectedNode.data?.type !== 'input' &&
+                 selectedNode.data?.type !== 'output' &&
+                 !isLlmNodeType(selectedNodeType) &&
                  selectedNode.data?.type !== 'tts' && (
                   <div className="mt-4 text-center text-gray-400 text-sm">
                     该节点暂无可配置项

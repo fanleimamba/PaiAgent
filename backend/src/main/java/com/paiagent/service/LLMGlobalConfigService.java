@@ -8,6 +8,7 @@ import com.paiagent.mapper.LLMGlobalConfigMapper;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Locale;
 import java.util.List;
 
 /**
@@ -65,6 +66,11 @@ public class LLMGlobalConfigService extends ServiceImpl<LLMGlobalConfigMapper, L
      */
     @Transactional
     public LLMGlobalConfig saveConfig(LLMGlobalConfig config) {
+        normalizeConfig(config);
+        validateConfig(config);
+        purgeDeletedDuplicate(config);
+        ensureUniqueProviderAndConfigName(config);
+
         // 检查是否是该提供商的第一个配置
         long count = this.countByProvider(config.getProvider());
 
@@ -92,6 +98,62 @@ public class LLMGlobalConfigService extends ServiceImpl<LLMGlobalConfigMapper, L
         return config;
     }
 
+    private void purgeDeletedDuplicate(LLMGlobalConfig config) {
+        LLMGlobalConfig existing = baseMapper.findAnyByProviderAndConfigName(
+                config.getProvider(),
+                config.getConfigName()
+        );
+
+        if (existing == null) {
+            return;
+        }
+
+        boolean sameRecord = config.getId() != null && config.getId().equals(existing.getId());
+        if (!sameRecord && existing.getDeleted() != null && existing.getDeleted() == 1) {
+            baseMapper.hardDeleteById(existing.getId());
+        }
+    }
+
+    private void normalizeConfig(LLMGlobalConfig config) {
+        config.setProvider(canonicalizeProvider(trimToNull(config.getProvider())));
+        config.setConfigName(trimToNull(config.getConfigName()));
+        config.setApiUrl(trimToNull(config.getApiUrl()));
+        config.setApiKey(trimToNull(config.getApiKey()));
+        config.setModel(trimToNull(config.getModel()));
+    }
+
+    private void validateConfig(LLMGlobalConfig config) {
+        if (config.getProvider() == null) {
+            throw new IllegalArgumentException("供应商不能为空");
+        }
+        if (config.getConfigName() == null) {
+            throw new IllegalArgumentException("配置别名不能为空");
+        }
+        if (config.getApiUrl() == null) {
+            throw new IllegalArgumentException("API 地址不能为空");
+        }
+        if (config.getApiKey() == null) {
+            throw new IllegalArgumentException("API 密钥不能为空");
+        }
+        if (config.getModel() == null) {
+            throw new IllegalArgumentException("模型名称不能为空");
+        }
+    }
+
+    private void ensureUniqueProviderAndConfigName(LLMGlobalConfig config) {
+        LambdaQueryWrapper<LLMGlobalConfig> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(LLMGlobalConfig::getProvider, config.getProvider())
+               .eq(LLMGlobalConfig::getConfigName, config.getConfigName());
+
+        if (config.getId() != null) {
+            wrapper.ne(LLMGlobalConfig::getId, config.getId());
+        }
+
+        if (this.count(wrapper) > 0) {
+            throw new IllegalArgumentException("同一供应商下的配置别名不能重复");
+        }
+    }
+
     /**
      * 删除配置
      * 如果删除的是默认配置，自动将下一个配置设为默认
@@ -106,7 +168,7 @@ public class LLMGlobalConfigService extends ServiceImpl<LLMGlobalConfigMapper, L
         String provider = config.getProvider();
         boolean wasDefault = config.getIsDefault() == 1;
 
-        this.removeById(id);
+        baseMapper.hardDeleteById(id);
 
         // 如果删除的是默认配置，将下一个配置设为默认
         if (wasDefault) {
@@ -126,5 +188,29 @@ public class LLMGlobalConfigService extends ServiceImpl<LLMGlobalConfigMapper, L
         LambdaQueryWrapper<LLMGlobalConfig> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(LLMGlobalConfig::getProvider, provider);
         return this.count(wrapper);
+    }
+
+    private String trimToNull(String value) {
+        if (value == null) {
+            return null;
+        }
+        String trimmed = value.trim();
+        return trimmed.isEmpty() ? null : trimmed;
+    }
+
+    private String canonicalizeProvider(String provider) {
+        if (provider == null) {
+            return null;
+        }
+
+        return switch (provider.toLowerCase(Locale.ROOT)) {
+            case "open ai" -> "openai";
+            case "deep seek" -> "deepseek";
+            case "通义千问" -> "qwen";
+            case "stepfun", "阶跃星辰" -> "step";
+            case "ai ping" -> "ai_ping";
+            case "智谱" -> "zhipu";
+            default -> provider;
+        };
     }
 }

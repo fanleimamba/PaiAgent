@@ -6,6 +6,7 @@ import com.paiagent.service.LLMGlobalConfigService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.dao.DuplicateKeyException;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -58,8 +59,12 @@ public class LLMConfigController {
         try {
             LLMGlobalConfig saved = llmGlobalConfigService.saveConfig(config);
             return Result.success(saved);
-        } catch (Exception e) {
+        } catch (IllegalArgumentException e) {
             return Result.error("保存配置失败: " + e.getMessage());
+        } catch (DuplicateKeyException e) {
+            return Result.error("保存配置失败: 同一供应商下的配置别名不能重复");
+        } catch (Exception e) {
+            return Result.error("保存配置失败，请稍后重试");
         }
     }
 

@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Drawer, Input, Button, Card, Timeline, Progress, Tag, Collapse, Alert } from 'antd';
 import { PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined } from '@ant-design/icons';
 import AudioPlayer from './AudioPlayer';
+import { buildBackendUrl } from '../config/api';
 import { ExecutionEvent, executeWorkflowStream } from '../api/workflow';
 import { useWorkflowStore } from '../store/workflowStore';
 
@@ -66,7 +67,7 @@ const DebugDrawer = ({ open, onClose, onExecute: _onExecute }: DebugDrawerProps)
       const nodeResults: NodeResult[] = [];
       const tempNodeStatusMap = new Map<string, NodeResult>();
       
-      executeWorkflowStream(
+      await executeWorkflowStream(
         currentWorkflowId,
         inputData,
         (event: ExecutionEvent) => {
@@ -347,7 +348,7 @@ const DebugDrawer = ({ open, onClose, onExecute: _onExecute }: DebugDrawerProps)
                         audioUrl = srcMatch[1];
                       }
                     } else if (output.startsWith('/audio/')) {
-                      audioUrl = 'http://localhost:8080' + output;
+                      audioUrl = buildBackendUrl(output);
                     }
                   }
                 }

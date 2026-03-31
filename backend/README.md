@@ -45,6 +45,13 @@ spring:
 
 或使用 IDE 运行 `PaiAgentApplication.java`
 
+已内置 `spring-boot-devtools`，开发时修改代码并触发编译后，应用会自动热重启。
+
+如果你用 IntelliJ IDEA，建议同时打开：
+
+- `Build project automatically`
+- `Advanced Settings > Allow auto-make to start even if developed application is currently running`
+
 ### 4. 访问 API 文档
 
 启动成功后,访问: http://localhost:8080/swagger-ui.html

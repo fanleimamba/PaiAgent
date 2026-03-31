@@ -425,7 +425,7 @@ cd backend
 Started PaiAgentApplication in X.XXX seconds
 ```
 
-后端服务地址：`http://localhost:8080`
+后端服务地址：`http://localhost:8084`
 
 #### 步骤 4：启动前端服务
 
@@ -433,6 +433,18 @@ Started PaiAgentApplication in X.XXX seconds
 
 ```bash
 cd frontend
+cp .env.example .env.local
+```
+
+如需修改前端连接的后端地址，编辑 `frontend/.env.local`：
+
+```bash
+VITE_API_BASE_URL=http://localhost:8084
+```
+
+然后启动前端：
+
+```bash
 npm install
 npm run dev
 ```
@@ -447,12 +459,18 @@ npm run dev
 | 服务 | 地址 | 说明 |
 |------|------|------|
 | 🌐 前端应用 | http://localhost:5173 | 主要操作界面 |
-| 🔧 后端 API | http://localhost:8080 | REST API 服务 |
-| 📚 API 文档 | http://localhost:8080/swagger-ui.html | Swagger 接口文档 |
+| 🔧 后端 API | http://localhost:8084 | REST API 服务 |
+| 📚 API 文档 | http://localhost:8084/swagger-ui.html | Swagger 接口文档 |
 
 **默认登录凭证**：
 - 用户名：`admin`
 - 密码：`123`
+
+### 端口说明
+
+- 后端端口在 [application.yml](/Users/itwanger/Documents/GitHub/PaiAgent-one/backend/src/main/resources/application.yml#L1) 中配置，当前默认值是 `8084`
+- 前端通过 Vite 环境变量 `VITE_API_BASE_URL` 连接后端，默认示例见 [`frontend/.env.example`](/Users/itwanger/Documents/GitHub/PaiAgent-one/frontend/.env.example)
+- 前端不能直接读取 Spring Boot 的 `application.yml`，所以如果后端端口变化，需要同步调整 `frontend/.env.local`
 
 ### 🎬 快速演示
 

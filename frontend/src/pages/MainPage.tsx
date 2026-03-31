@@ -1,5 +1,7 @@
 import { Navigate } from 'react-router-dom';
+import { logout } from '../api/auth';
 import { useAuthStore } from '../store/authStore';
+import { getRefreshToken } from '../utils/auth';
 
 /**
  * 主页面(临时占位)
@@ -7,7 +9,15 @@ import { useAuthStore } from '../store/authStore';
 const MainPage = () => {
   const { username, clearAuth } = useAuthStore();
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    const refreshToken = getRefreshToken();
+    if (refreshToken) {
+      try {
+        await logout({ refreshToken });
+      } catch {
+        // 后端退出失败不阻塞本地登出
+      }
+    }
     clearAuth();
   };
 

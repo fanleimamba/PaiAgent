@@ -7,9 +7,14 @@ export interface LoginRequest {
 
 export interface LoginResponse {
   token: string;
+  refreshToken: string;
   user: {
     username: string;
   };
+}
+
+export interface RefreshTokenRequest {
+  refreshToken: string;
 }
 
 export interface ApiResult<T> {
@@ -28,8 +33,15 @@ export const login = (data: LoginRequest): Promise<ApiResult<LoginResponse>> => 
 /**
  * 用户登出
  */
-export const logout = (): Promise<ApiResult<void>> => {
-  return api.post('/api/auth/logout');
+export const logout = (data?: RefreshTokenRequest): Promise<ApiResult<void>> => {
+  return api.post('/api/auth/logout', data);
+};
+
+/**
+ * 刷新访问令牌
+ */
+export const refreshToken = (data: RefreshTokenRequest): Promise<ApiResult<LoginResponse>> => {
+  return api.post('/api/auth/refresh', data);
 };
 
 /**

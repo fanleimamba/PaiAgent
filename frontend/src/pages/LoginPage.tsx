@@ -19,7 +19,7 @@ const LoginPage = () => {
       const result = await login(values);
       if (result.code === 200 && result.data) {
         message.success('登录成功');
-        setAuth(result.data.token, result.data.user.username);
+        setAuth(result.data.token, result.data.refreshToken, result.data.user.username);
         navigate('/');
       } else {
         message.error(result.message || '登录失败');

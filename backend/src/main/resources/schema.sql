@@ -76,6 +76,11 @@ INSERT INTO node_definition (node_type, display_name, category, icon, input_sche
  '{"type": "object", "properties": {"input": {"type": "string"}}}',
  '{"type": "object", "properties": {"output": {"type": "string"}, "tokens": {"type": "number"}}}',
  '{"type": "object", "properties": {"apiKey": {"type": "string"}, "model": {"type": "string", "default": "qwen-turbo"}, "prompt": {"type": "string"}, "temperature": {"type": "number", "default": 0.7}, "maxTokens": {"type": "number", "default": 1000}}}'),
+
+('step', 'Step', 'LLM', '🟆',
+ '{"type": "object", "properties": {"input": {"type": "string"}}}',
+ '{"type": "object", "properties": {"output": {"type": "string"}, "tokens": {"type": "number"}}}',
+ '{"type": "object", "properties": {"apiKey": {"type": "string"}, "model": {"type": "string", "default": "claude-3-5-sonnet-20241022"}, "prompt": {"type": "string"}, "temperature": {"type": "number", "default": 0.7}, "maxTokens": {"type": "number", "default": 1000}}}'),
  
 ('tts', '超拟人音频合成', 'TOOL', '🔊',
  '{"type": "object", "properties": {"text": {"type": "string"}}}',
@@ -85,7 +90,7 @@ INSERT INTO node_definition (node_type, display_name, category, icon, input_sche
 -- 全局 LLM 配置表
 CREATE TABLE IF NOT EXISTS llm_global_config (
     id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '配置主键 ID',
-    provider VARCHAR(50) NOT NULL COMMENT '提供商: openai/deepseek/qwen',
+    provider VARCHAR(50) NOT NULL COMMENT '提供商: openai/deepseek/qwen/step',
     config_name VARCHAR(100) NOT NULL COMMENT '配置名称',
     api_url VARCHAR(255) NOT NULL COMMENT 'API地址',
     api_key TEXT NOT NULL COMMENT 'API密钥',

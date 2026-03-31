@@ -1,4 +1,6 @@
 import api from '../utils/request';
+import { buildBackendUrl } from '../config/api';
+import { clearStoredAuth, ensureValidAccessToken } from '../utils/auth';
 
 export interface NodeDefinition {
   id: number;
@@ -93,23 +95,25 @@ export interface ExecutionEvent {
   timestamp?: number;
 }
 
-export const executeWorkflowStream = (
+export const executeWorkflowStream = async (
   id: number, 
   inputData: string, 
   onEvent: (event: ExecutionEvent) => void,
   onComplete: () => void,
   onError: (error: Error) => void
 ) => {
-  const token = localStorage.getItem('token');
+  const token = await ensureValidAccessToken();
   
   if (!token) {
-    localStorage.removeItem('token');
+    clearStoredAuth();
     window.location.href = '/login';
     onError(new Error('未登录'));
     return null;
   }
   
-  const url = `http://localhost:8080/api/workflows/${id}/execute/stream?inputData=${encodeURIComponent(inputData)}&token=${token}`;
+  const url = buildBackendUrl(
+    `/api/workflows/${id}/execute/stream?inputData=${encodeURIComponent(inputData)}&token=${token}`
+  );
   
   const eventSource = new EventSource(url);
   
@@ -165,7 +169,7 @@ export const executeWorkflowStream = (
     eventSource.close();
     
     if (!hasReceivedData) {
-      localStorage.removeItem('token');
+      clearStoredAuth();
       window.location.href = '/login';
       onError(new Error('认证失败,请重新登录'));
     } else {

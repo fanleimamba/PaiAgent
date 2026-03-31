@@ -25,24 +25,24 @@ public class ChatClientFactory {
     private static final String V1_SUFFIX = "/v1";
 
     /**
-     * 根据节点类型和配置创建ChatClient
+     * 根据提供商和配置创建ChatClient
      *
-     * @param nodeType    节点类型 (openai/deepseek/qwen)
+     * @param provider    提供商标识 (openai/deepseek/qwen/step/zhipu/ai_ping)
      * @param apiUrl      API端点URL
      * @param apiKey      API密钥
      * @param model       模型名称
      * @param temperature 温度参数
      * @return ChatClient实例
      */
-    public ChatClient createClient(String nodeType, String apiUrl, String apiKey,
+    public ChatClient createClient(String provider, String apiUrl, String apiKey,
                                    String model, Double temperature) {
-        return createClientWithFunctions(nodeType, apiUrl, apiKey, model, temperature, List.of());
+        return createClientWithFunctions(provider, apiUrl, apiKey, model, temperature, List.of());
     }
 
     /**
      * 创建带 Function Calling 支持的 ChatClient
      *
-     * @param nodeType    节点类型 (openai/deepseek/qwen)
+     * @param provider    提供商标识 (openai/deepseek/qwen/step/zhipu/ai_ping)
      * @param apiUrl      API端点URL
      * @param apiKey      API密钥
      * @param model       模型名称
@@ -50,15 +50,17 @@ public class ChatClientFactory {
      * @param functions   函数回调列表
      * @return ChatClient实例
      */
-    public ChatClient createClientWithFunctions(String nodeType, String apiUrl, String apiKey,
+    public ChatClient createClientWithFunctions(String provider, String apiUrl, String apiKey,
                                                  String model, Double temperature,
                                                  List<FunctionCallback> functions) {
+        String normalizedProvider = normalizeProvider(provider);
         log.info("创建ChatClient - 类型: {}, URL: {}, 模型: {}, 温度: {}, 函数数量: {}",
-                nodeType, apiUrl, model, temperature, functions.size());
+                normalizedProvider, apiUrl, model, temperature, functions.size());
 
-        ChatModel chatModel = switch (nodeType) {
-            case "openai", "deepseek", "qwen" -> createOpenAICompatibleModel(apiUrl, apiKey, model, temperature);
-            default -> throw new IllegalArgumentException("不支持的节点类型: " + nodeType);
+        ChatModel chatModel = switch (normalizedProvider) {
+            case "openai", "deepseek", "qwen", "step", "zhipu", "ai_ping" ->
+                    createOpenAICompatibleModel(apiUrl, apiKey, model, temperature);
+            default -> throw new IllegalArgumentException("不支持的提供商类型: " + provider);
         };
 
         ChatClient.Builder builder = ChatClient.builder(chatModel);
@@ -122,5 +124,22 @@ public class ChatClientFactory {
             end--;
         }
         return value.substring(0, end);
+    }
+
+    private String normalizeProvider(String provider) {
+        if (provider == null) {
+            return "";
+        }
+
+        String normalized = provider.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "open ai" -> "openai";
+            case "deep seek" -> "deepseek";
+            case "通义千问" -> "qwen";
+            case "stepfun", "阶跃星辰" -> "step";
+            case "智谱" -> "zhipu";
+            case "ai ping" -> "ai_ping";
+            default -> normalized;
+        };
     }
 }

@@ -25,10 +25,17 @@ npm install
 ### 2. 启动开发服务器
 
 ```bash
+cp .env.example .env.local
 npm run dev
 ```
 
 应用将在 http://localhost:5173 启动
+
+默认会连接 `http://localhost:8084` 后端。如果后端地址有变化，修改 `frontend/.env.local`：
+
+```bash
+VITE_API_BASE_URL=http://localhost:8084
+```
 
 ### 3. 构建生产版本
 
@@ -66,10 +73,10 @@ src/
 
 ## 环境变量
 
-后端 API 地址在 `src/utils/request.ts` 中配置:
+后端 API 地址通过 Vite 环境变量配置，示例见 `.env.example`：
 
-```typescript
-baseURL: 'http://localhost:8080'
+```bash
+VITE_API_BASE_URL=http://localhost:8084
 ```
 
 ## 默认账户

@@ -4,21 +4,24 @@ import {
   Form,
   Input,
   InputNumber,
-  Select,
+  AutoComplete,
   Button,
   Table,
   Space,
   message,
-  Popconfirm
+  Popconfirm,
+  Tag
 } from 'antd';
 import { SettingOutlined, PlusOutlined, EditOutlined, DeleteOutlined, StarOutlined, StarFilled } from '@ant-design/icons';
 import { useLLMConfigStore } from '../store/llmConfigStore';
 import { LLMGlobalConfig, LLMConfigRequest } from '../api/llmConfig';
+import { getProviderLabel, normalizeProviderKey } from '../utils/provider';
 
 const PROVIDERS = [
   { value: 'openai', label: 'OpenAI' },
   { value: 'deepseek', label: 'DeepSeek' },
-  { value: 'qwen', label: '通义千问' }
+  { value: 'qwen', label: '通义千问' },
+  { value: 'step', label: '阶跃星辰' }
 ];
 
 interface LLMConfigModalProps {
@@ -42,6 +45,19 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
     setDefaultConfig,
     clearError
   } = useLLMConfigStore();
+
+  const providerOptions = Array.from(
+    new Map(
+      [...PROVIDERS, ...configs.map((config) => ({
+        value: normalizeProviderKey(config.provider),
+        label: getProviderLabel(config.provider)
+      }))]
+        .map((item) => [normalizeProviderKey(item.value), item])
+    ).values()
+  ).map((item) => ({
+    value: normalizeProviderKey(item.value),
+    label: item.label
+  }));
 
   useEffect(() => {
     if (modalVisible) {
@@ -101,9 +117,10 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
   const handleSubmit = async () => {
     try {
       const values = await form.validateFields();
+      const provider = normalizeProviderKey(values.provider);
       const request: LLMConfigRequest = {
         id: editingConfig?.id,
-        provider: values.provider,
+        provider,
         configName: values.configName,
         apiUrl: values.apiUrl,
         apiKey: values.apiKey,
@@ -140,48 +157,54 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
       title: '提供商',
       dataIndex: 'provider',
       key: 'provider',
-      width: 100,
+      ellipsis: true,
+      width: 88,
       render: (provider: string) => {
-        const p = PROVIDERS.find(item => item.value === provider);
-        return p?.label || provider;
+        return getProviderLabel(provider);
       }
     },
     {
-      title: '配置名称',
+      title: '配置别名',
       dataIndex: 'configName',
       key: 'configName',
-      width: 150
+      ellipsis: true,
+      width: 132
     },
     {
       title: 'API 地址',
       dataIndex: 'apiUrl',
       key: 'apiUrl',
       ellipsis: true,
-      width: 200
+      width: 210
     },
     {
       title: '模型',
       dataIndex: 'model',
       key: 'model',
-      width: 120
+      width: 170
     },
     {
       title: '温度',
       dataIndex: 'temperature',
       key: 'temperature',
-      width: 80
+      width: 64
     },
     {
-      title: '默认',
+      title: '供应商默认',
       dataIndex: 'isDefault',
       key: 'isDefault',
-      width: 60,
-      render: (isDefault: number) => isDefault === 1 ? <StarFilled style={{ color: '#faad14' }} /> : null
+      width: 108,
+      render: (isDefault: number) =>
+        isDefault === 1 ? (
+          <Tag color="gold" icon={<StarFilled />}>
+            默认
+          </Tag>
+        ) : null
     },
     {
       title: '操作',
       key: 'action',
-      width: 150,
+      width: 140,
       render: (_: any, record: LLMGlobalConfig) => (
         <Space size="small">
           <Button
@@ -199,7 +222,7 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
               icon={<StarOutlined />}
               onClick={() => handleSetDefault(record.id)}
             >
-              设为默认
+              设为该供应商默认
             </Button>
           )}
           <Popconfirm
@@ -238,7 +261,8 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
         open={modalVisible}
         onCancel={handleCloseModal}
         footer={null}
-        width={900}
+        width={1100}
+        style={{ maxWidth: 'calc(100vw - 32px)' }}
       >
         <div className="mb-4">
           <Button
@@ -248,6 +272,9 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
           >
             新增配置
           </Button>
+          <div className="text-xs text-gray-500 mt-2">
+            默认配置按供应商分别生效，每个供应商会有一条默认配置。
+          </div>
         </div>
 
         <Table
@@ -257,6 +284,8 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
           loading={loading}
           pagination={false}
           size="small"
+          tableLayout="fixed"
+          scroll={{ x: 980 }}
         />
 
         <Modal
@@ -276,28 +305,42 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
             <Form.Item
               name="provider"
               label="提供商"
-              rules={[{ required: true, message: '请选择提供商' }]}
+              rules={[
+                { required: true, message: '请输入或选择提供商' },
+                {
+                  validator: (_, value) =>
+                    value?.trim()
+                      ? Promise.resolve()
+                      : Promise.reject(new Error('请输入或选择提供商'))
+                }
+              ]}
+              extra="支持直接手填，也可以从已有供应商中选择。手填时建议与节点类型保持一致，例如 openai、deepseek、qwen、step。"
             >
-              <Select
-                placeholder="选择提供商"
-                options={PROVIDERS}
+              <AutoComplete
+                placeholder="请输入或选择提供商"
+                options={providerOptions}
                 disabled={!!editingConfig}
+                filterOption={(inputValue, option) =>
+                  (option?.value ?? '').toLowerCase().includes(inputValue.toLowerCase()) ||
+                  String(option?.label ?? '').toLowerCase().includes(inputValue.toLowerCase())
+                }
               />
             </Form.Item>
 
             <Form.Item
               name="configName"
-              label="配置名称"
-              rules={[{ required: true, message: '请输入配置名称' }]}
+              label="配置别名"
+              rules={[{ required: true, message: '请输入配置别名' }]}
+              extra="给这套配置起一个方便识别的名字，比如“默认 OpenAI”“便宜模型”“主账号”。"
             >
-              <Input placeholder="例如: 生产环境、测试环境" />
+              <Input placeholder="例如: 默认 OpenAI、主账号、便宜模型" />
             </Form.Item>
 
             <Form.Item
               name="apiUrl"
               label="API 地址"
               rules={[{ required: true, message: '请输入 API 地址' }]}
-              extra="填写兼容接口的根地址，不要追加 /v1 或 /v1/chat/completions。例如 OpenAI: https://api.openai.com，DeepSeek: https://api.deepseek.com，Qwen: https://dashscope.aliyuncs.com/compatible-mode"
+              extra="填写接口根地址，不要追加具体接口路径。"
             >
               <Input placeholder="例如: https://api.openai.com" />
             </Form.Item>
@@ -315,7 +358,7 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
               label="默认模型"
               rules={[{ required: true, message: '请输入默认模型' }]}
             >
-              <Input placeholder="例如: gpt-3.5-turbo, deepseek-chat" />
+              <Input placeholder="例如: gpt-3.5-turbo, deepseek-chat, claude-3-5-sonnet-20241022" />
             </Form.Item>
 
             <Form.Item

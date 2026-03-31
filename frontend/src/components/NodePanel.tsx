@@ -37,7 +37,7 @@ const NodePanel = ({ onDragStart }: NodePanelProps) => {
   };
 
   // 按分类分组节点
-  const llmNodes = nodeTypes.filter((node) => node.category === 'LLM' && node.nodeType !== 'openai');
+  const llmNodes = nodeTypes.filter((node) => node.nodeType === 'llm');
   const toolNodes = nodeTypes.filter((node) => node.category === 'TOOL');
 
   const renderNodeItem = (node: NodeDefinition) => (

@@ -23,6 +23,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Consumer;
@@ -67,12 +68,13 @@ public abstract class AbstractLLMNodeExecutor implements NodeExecutor {
         // 1. 提取节点配置
         LLMNodeConfig config = extractConfig(node);
         validateResolvedConfig(config);
+        String provider = config.getProvider();
 
         log.info("{} 节点配置 - API: {}, Model: {}, Temperature: {}, Skill: {}",
-                getNodeType().toUpperCase(), config.getApiUrl(), config.getModel(),
+                provider.toUpperCase(Locale.ROOT), config.getApiUrl(), config.getModel(),
                 config.getTemperature(), config.getSkillName());
-        log.info("{} 输入参数配置: {}", getNodeType().toUpperCase(), config.getInputParams());
-        log.info("{} 输入数据: {}", getNodeType().toUpperCase(), input);
+        log.info("{} 输入参数配置: {}", provider.toUpperCase(Locale.ROOT), config.getInputParams());
+        log.info("{} 输入数据: {}", provider.toUpperCase(Locale.ROOT), input);
 
         // 2. 获取关联的 Skill（如果有）
         Optional<Skill> skill = Optional.empty();
@@ -82,17 +84,17 @@ public abstract class AbstractLLMNodeExecutor implements NodeExecutor {
         if (config.getSkillName() != null && !config.getSkillName().isBlank()) {
             skill = skillRegistry.getSkill(config.getSkillName());
             if (skill.isPresent()) {
-                log.info("{} 关联 Skill: {}", getNodeType().toUpperCase(), skill.get().getName());
+                log.info("{} 关联 Skill: {}", provider.toUpperCase(Locale.ROOT), skill.get().getName());
 
                 // 直接加载所有 references，打包进 Prompt
                 skillReferences = skillRegistry.loadAllReferences(config.getSkillName());
-                log.info("{} 加载了 {} 个 reference 文件", getNodeType().toUpperCase(), skillReferences.size());
+                log.info("{} 加载了 {} 个 reference 文件", provider.toUpperCase(Locale.ROOT), skillReferences.size());
 
                 // 不再需要注册函数，直接打包所有内容
                 // functions.add(new LoadSkillDetailFunction(skillRegistry));
                 // functions.add(new LoadSkillReferenceFunction(skillRegistry));
             } else {
-                log.warn("{} 未找到 Skill: {}", getNodeType().toUpperCase(), config.getSkillName());
+                log.warn("{} 未找到 Skill: {}", provider.toUpperCase(Locale.ROOT), config.getSkillName());
             }
         }
 
@@ -109,7 +111,7 @@ public abstract class AbstractLLMNodeExecutor implements NodeExecutor {
 
         // 5. 创建 ChatClient（带或不带 Functions）
         ChatClient chatClient = chatClientFactory.createClientWithFunctions(
-                getNodeType(),
+                provider,
                 config.getApiUrl(),
                 config.getApiKey(),
                 config.getModel(),
@@ -130,16 +132,16 @@ public abstract class AbstractLLMNodeExecutor implements NodeExecutor {
             llmResponse = executeNormal(chatClient, systemPrompt, userPrompt);
         }
 
-        log.info("{} API响应: {}", getNodeType().toUpperCase(), llmResponse.getContent());
+        log.info("{} API响应: {}", provider.toUpperCase(Locale.ROOT), llmResponse.getContent());
         log.info("{} Token统计: 输入={}, 输出={}, 总计={}",
-                getNodeType().toUpperCase(),
+                provider.toUpperCase(Locale.ROOT),
                 llmResponse.getInputTokens(),
                 llmResponse.getOutputTokens(),
                 llmResponse.getTotalTokens());
 
         // 7. 构建输出
         Map<String, Object> output = buildOutput(llmResponse, config.getOutputParams());
-        log.info("{} 节点输出: {}", getNodeType().toUpperCase(), output);
+        log.info("{} 节点输出: {}", provider.toUpperCase(Locale.ROOT), output);
 
         return output;
     }
@@ -337,7 +339,8 @@ public abstract class AbstractLLMNodeExecutor implements NodeExecutor {
                 config.setTemperature(globalConfig.getTemperature() != null
                         ? globalConfig.getTemperature().doubleValue()
                         : 0.7);
-                log.info("{} 使用全局配置: {}", getNodeType().toUpperCase(), globalConfig.getConfigName());
+                config.setProvider(canonicalizeProvider(trimString(globalConfig.getProvider())));
+                log.info("{} 使用全局配置: {}", config.getProvider().toUpperCase(Locale.ROOT), globalConfig.getConfigName());
             } else {
                 log.warn("{} 全局配置不存在: {}", getNodeType().toUpperCase(), configId);
                 applyNodeLevelConfig(config, data);
@@ -347,6 +350,9 @@ public abstract class AbstractLLMNodeExecutor implements NodeExecutor {
         }
 
         config.setConfigId(configId);
+        if (isBlank(config.getProvider())) {
+            config.setProvider(resolveProvider(node, data));
+        }
         config.setPromptTemplate((String) data.get("prompt"));
         config.setInputParams((List<Map<String, Object>>) data.get("inputParams"));
         config.setOutputParams((List<Map<String, Object>>) data.get("outputParams"));
@@ -357,6 +363,7 @@ public abstract class AbstractLLMNodeExecutor implements NodeExecutor {
     }
 
     private void applyNodeLevelConfig(LLMNodeConfig config, Map<String, Object> data) {
+        config.setProvider(canonicalizeProvider(trimString(data.get("provider"))));
         config.setApiUrl(trimString(data.get("apiUrl")));
         config.setApiKey(trimString(data.get("apiKey")));
         config.setModel(trimString(data.get("model")));
@@ -366,11 +373,43 @@ public abstract class AbstractLLMNodeExecutor implements NodeExecutor {
     }
 
     private void validateResolvedConfig(LLMNodeConfig config) {
+        if (isBlank(config.getProvider())) {
+            throw new IllegalArgumentException("LLM 节点缺少有效的提供商配置，请先选择供应商或全局配置");
+        }
         if (isBlank(config.getApiUrl()) || isBlank(config.getApiKey()) || isBlank(config.getModel())) {
             throw new IllegalArgumentException(
                     String.format("%s 节点缺少有效的模型配置，请检查全局配置或节点配置", getNodeType().toUpperCase())
             );
         }
+    }
+
+    private String resolveProvider(WorkflowNode node, Map<String, Object> data) {
+        String configuredProvider = trimString(data.get("provider"));
+        if (!isBlank(configuredProvider)) {
+            return canonicalizeProvider(configuredProvider);
+        }
+
+        if ("llm".equals(node.getType())) {
+            return null;
+        }
+
+        return canonicalizeProvider(node.getType());
+    }
+
+    private String canonicalizeProvider(String provider) {
+        if (provider == null) {
+            return null;
+        }
+
+        String normalized = provider.trim().toLowerCase(Locale.ROOT);
+
+        return switch (normalized) {
+            case "stepfun", "阶跃星辰" -> "step";
+            case "通义千问" -> "qwen";
+            case "智谱" -> "zhipu";
+            case "ai ping" -> "ai_ping";
+            default -> normalized;
+        };
     }
 
     private boolean isBlank(String value) {

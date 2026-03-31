@@ -1,10 +1,12 @@
 import { create } from 'zustand';
+import { clearStoredAuth, getAccessToken, getRefreshToken, getUsername, setStoredAuth } from '../utils/auth';
 
 interface AuthState {
   token: string | null;
+  refreshToken: string | null;
   username: string | null;
   isAuthenticated: boolean;
-  setAuth: (token: string, username: string) => void;
+  setAuth: (token: string, refreshToken: string, username: string) => void;
   clearAuth: () => void;
 }
 
@@ -12,19 +14,18 @@ interface AuthState {
  * 认证状态管理
  */
 export const useAuthStore = create<AuthState>((set) => ({
-  token: localStorage.getItem('token'),
-  username: localStorage.getItem('username'),
-  isAuthenticated: !!localStorage.getItem('token'),
+  token: getAccessToken(),
+  refreshToken: getRefreshToken(),
+  username: getUsername(),
+  isAuthenticated: !!getRefreshToken(),
   
-  setAuth: (token: string, username: string) => {
-    localStorage.setItem('token', token);
-    localStorage.setItem('username', username);
-    set({ token, username, isAuthenticated: true });
+  setAuth: (token: string, refreshToken: string, username: string) => {
+    setStoredAuth(token, refreshToken, username);
+    set({ token, refreshToken, username, isAuthenticated: true });
   },
   
   clearAuth: () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('username');
-    set({ token: null, username: null, isAuthenticated: false });
+    clearStoredAuth();
+    set({ token: null, refreshToken: null, username: null, isAuthenticated: false });
   },
 }));

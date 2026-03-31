@@ -1,10 +1,21 @@
 package com.paiagent.service;
 
+import io.jsonwebtoken.Claims;
+import io.jsonwebtoken.Jwts;
+import io.jsonwebtoken.JwtException;
+import io.jsonwebtoken.security.Keys;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.data.redis.core.StringRedisTemplate;
+import org.springframework.beans.factory.annotation.Autowired;
 
-import java.util.Map;
+import javax.crypto.SecretKey;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
+import java.util.Date;
 import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 认证服务
@@ -21,42 +32,135 @@ public class AuthService {
      * 默认密码
      */
     private static final String DEFAULT_PASSWORD = "123";
-    
-    /**
-     * Token 存储(Token -> Username)
-     */
-    private final Map<String, String> tokenStore = new ConcurrentHashMap<>();
+
+    private static final String ACCESS_TOKEN_TYPE = "access";
+    private static final String REFRESH_TOKEN_PREFIX = "auth:refresh:";
+
+    @Value("${paiagent.auth.jwt-secret}")
+    private String jwtSecret;
+
+    @Value("${paiagent.auth.access-token-expiration-minutes:120}")
+    private long accessTokenExpirationMinutes;
+
+    @Value("${paiagent.auth.refresh-token-expiration-hours:168}")
+    private long refreshTokenExpirationHours;
+
+    @Autowired
+    private StringRedisTemplate stringRedisTemplate;
     
     /**
      * 用户登录
      */
-    public String login(String username, String password) {
+    public AuthTokens login(String username, String password) {
         if (DEFAULT_USERNAME.equals(username) && DEFAULT_PASSWORD.equals(password)) {
-            String token = UUID.randomUUID().toString().replace("-", "");
-            tokenStore.put(token, username);
-            return token;
+            return issueTokens(username);
         }
         return null;
+    }
+
+    public AuthTokens refresh(String refreshToken) {
+        String username = getUsernameByRefreshToken(refreshToken);
+        if (username == null) {
+            return null;
+        }
+
+        revokeRefreshToken(refreshToken);
+        return issueTokens(username);
     }
     
     /**
      * 用户登出
      */
-    public void logout(String token) {
-        tokenStore.remove(token);
+    public void logout(String refreshToken) {
+        revokeRefreshToken(refreshToken);
     }
     
     /**
      * 验证 Token
      */
     public boolean validateToken(String token) {
-        return tokenStore.containsKey(token);
+        try {
+            Claims claims = parseClaims(token);
+            return ACCESS_TOKEN_TYPE.equals(claims.get("tokenType"))
+                    && claims.getExpiration() != null
+                    && claims.getExpiration().after(new Date());
+        } catch (JwtException | IllegalArgumentException e) {
+            return false;
+        }
     }
     
     /**
      * 获取 Token 对应的用户名
      */
     public String getUsernameByToken(String token) {
-        return tokenStore.get(token);
+        try {
+            Claims claims = parseClaims(token);
+            return ACCESS_TOKEN_TYPE.equals(claims.get("tokenType")) ? claims.getSubject() : null;
+        } catch (JwtException | IllegalArgumentException e) {
+            return null;
+        }
+    }
+
+    public void revokeRefreshToken(String refreshToken) {
+        if (refreshToken == null || refreshToken.isBlank()) {
+            return;
+        }
+        stringRedisTemplate.delete(buildRefreshTokenKey(refreshToken));
+    }
+
+    private AuthTokens issueTokens(String username) {
+        String accessToken = createAccessToken(username);
+        String refreshToken = createRefreshToken();
+
+        stringRedisTemplate.opsForValue().set(
+                buildRefreshTokenKey(refreshToken),
+                username,
+                Duration.ofHours(refreshTokenExpirationHours)
+        );
+
+        return new AuthTokens(accessToken, refreshToken, username);
+    }
+
+    private String createAccessToken(String username) {
+        Instant now = Instant.now();
+        Instant expiresAt = now.plus(accessTokenExpirationMinutes, ChronoUnit.MINUTES);
+
+        return Jwts.builder()
+                .subject(username)
+                .claim("tokenType", ACCESS_TOKEN_TYPE)
+                .issuedAt(Date.from(now))
+                .expiration(Date.from(expiresAt))
+                .signWith(getSigningKey())
+                .compact();
+    }
+
+    private String createRefreshToken() {
+        return UUID.randomUUID().toString().replace("-", "");
+    }
+
+    private String getUsernameByRefreshToken(String refreshToken) {
+        if (refreshToken == null || refreshToken.isBlank()) {
+            return null;
+        }
+        return stringRedisTemplate.opsForValue().get(buildRefreshTokenKey(refreshToken));
+    }
+
+    private String buildRefreshTokenKey(String refreshToken) {
+        return REFRESH_TOKEN_PREFIX + refreshToken;
+    }
+
+    private Claims parseClaims(String token) {
+        return Jwts.parser()
+                .verifyWith(getSigningKey())
+                .build()
+                .parseSignedClaims(token)
+                .getPayload();
+    }
+
+    private SecretKey getSigningKey() {
+        return Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
+    }
+
+    public record AuthTokens(String accessToken, String refreshToken, String username) {
     }
 }

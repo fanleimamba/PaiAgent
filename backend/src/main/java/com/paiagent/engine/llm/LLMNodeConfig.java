@@ -10,6 +10,11 @@ import java.util.Map;
  */
 @Data
 public class LLMNodeConfig {
+
+    /**
+     * 提供商标识
+     */
+    private String provider;
     
     /**
      * API端点URL

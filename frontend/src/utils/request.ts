@@ -1,10 +1,16 @@
-import axios, { AxiosInstance } from 'axios';
+import axios, { AxiosError, AxiosInstance, InternalAxiosRequestConfig } from 'axios';
+import { API_BASE_URL } from '../config/api';
+import { clearStoredAuth, getAccessToken, refreshAccessToken } from './auth';
+
+interface RetryableAxiosRequestConfig extends InternalAxiosRequestConfig {
+  _retry?: boolean;
+}
 
 /**
  * Axios 实例
  */
 const api: AxiosInstance = axios.create({
-  baseURL: 'http://localhost:8080',
+  baseURL: API_BASE_URL,
   timeout: 60000,
   headers: {
     'Content-Type': 'application/json',
@@ -16,8 +22,7 @@ const api: AxiosInstance = axios.create({
  */
 api.interceptors.request.use(
   (config) => {
-    // 从 localStorage 获取 Token
-    const token = localStorage.getItem('token');
+    const token = getAccessToken();
     if (token) {
       config.headers.Authorization = `Bearer ${token}`;
     }
@@ -35,10 +40,23 @@ api.interceptors.response.use(
   (response) => {
     return response.data;
   },
-  (error) => {
-    if (error.response?.status === 401) {
-      // 未认证,清除 Token 并跳转到登录页
-      localStorage.removeItem('token');
+  async (error: AxiosError) => {
+    const originalRequest = error.config as RetryableAxiosRequestConfig | undefined;
+    const isUnauthorized = error.response?.status === 401;
+    const isRefreshRequest = originalRequest?.url?.includes('/api/auth/refresh');
+
+    if (isUnauthorized && originalRequest && !originalRequest._retry && !isRefreshRequest) {
+      originalRequest._retry = true;
+
+      const refreshedToken = await refreshAccessToken();
+      if (refreshedToken) {
+        originalRequest.headers.Authorization = `Bearer ${refreshedToken}`;
+        return api(originalRequest);
+      }
+    }
+
+    if (isUnauthorized) {
+      clearStoredAuth();
       window.location.href = '/login';
     }
     return Promise.reject(error);
