@@ -6,11 +6,13 @@ interface RetryableAxiosRequestConfig extends InternalAxiosRequestConfig {
   _retry?: boolean;
 }
 
+const isAbsoluteApiBaseUrl = /^https?:\/\//.test(API_BASE_URL);
+
 /**
  * Axios 实例
  */
 const api: AxiosInstance = axios.create({
-  baseURL: API_BASE_URL,
+  baseURL: isAbsoluteApiBaseUrl ? API_BASE_URL : '',
   timeout: 60000,
   headers: {
     'Content-Type': 'application/json',

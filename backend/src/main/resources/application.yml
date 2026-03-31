@@ -1,9 +1,13 @@
 server:
-  port: 8084
+  port: ${SERVER_PORT:8084}
 
 spring:
   application:
     name: PaiAgent
+  config:
+    import:
+      - optional:file:.env[.properties]
+      - optional:file:backend/.env[.properties]
   devtools:
     restart:
       enabled: true
@@ -12,14 +16,15 @@ spring:
       enabled: true
   data:
     redis:
-      host: localhost
-      port: 6379
+      host: ${REDIS_HOST:localhost}
+      port: ${REDIS_PORT:6379}
       timeout: 2s
+      password: ${REDIS_PASSWORD:}
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
-    url: jdbc:mysql://localhost:3306/paiagent?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai
-    username: root
-    password: 123456
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:paiagent}?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:}
   jackson:
     time-zone: GMT+8
     date-format: yyyy-MM-dd HH:mm:ss
@@ -59,17 +64,23 @@ springdoc:
 
 # MinIO 配置
 minio:
-  endpoint: http://localhost:9000
-  accessKey: minioadmin
-  secretKey: minioadmin
+  endpoint: ${MINIO_ENDPOINT:http://localhost:9000}
+  accessKey: ${MINIO_ACCESS_KEY:minioadmin}
+  secretKey: ${MINIO_SECRET_KEY:minioadmin}
   bucketName: paiagent
-  publicUrl: http://localhost:9000
+  publicUrl: ${MINIO_PUBLIC_URL:http://localhost:9000}
 
 # PaiAgent 配置
 paiagent:
   auth:
-    jwt-secret: paiagent-one-jwt-secret-key-change-me-to-a-long-random-string
+    # 本地开发未配置 JWT_SECRET 时会自动生成临时强密钥；生产环境请务必显式配置
+    jwt-secret: ${JWT_SECRET:}
     access-token-expiration-minutes: 120
     refresh-token-expiration-hours: 168
+  # 默认管理员账户（生产环境必须修改或禁用）
+  # 通过环境变量 APP_AUTH_DEFAULT_USERNAME 和 APP_AUTH_DEFAULT_PASSWORD 配置
+  # 留空则禁用默认账户，必须通过注册功能创建账户
+  default-username: ${APP_AUTH_DEFAULT_USERNAME:admin}
+  default-password: ${APP_AUTH_DEFAULT_PASSWORD:admin123}
   skills:
     path: skills

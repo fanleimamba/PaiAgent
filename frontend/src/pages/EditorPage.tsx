@@ -1,7 +1,7 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { Button, Input, Form, message, Checkbox, Select, Modal, List } from 'antd';
 import { SaveOutlined, FolderOpenOutlined, BugOutlined, LogoutOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons';
-import { Node } from '@xyflow/react';
+import { Edge, MarkerType, Node } from '@xyflow/react';
 import NodePanel from '../components/NodePanel';
 import FlowCanvas from '../components/FlowCanvas';
 import DebugDrawer from '../components/DebugDrawer';
@@ -20,6 +20,7 @@ import {
   isLlmNodeType,
   normalizeProviderKey,
 } from '../utils/provider';
+import { createDefaultWorkflowNodes, normalizeWorkflowNodes, serializeWorkflowNodes } from '../utils/workflowNode';
 import { useNavigate, useParams } from 'react-router-dom';
 
 interface OutputParam {
@@ -52,6 +53,11 @@ interface TtsInputParam {
 interface TtsOutputParam {
   name: string;
   value: string;
+}
+
+interface WorkflowCanvasData {
+  nodes?: Node[];
+  edges?: Edge[];
 }
 
 /**
@@ -179,7 +185,7 @@ const EditorPage = () => {
   // 初始化加载 LLM 全局配置
   useEffect(() => {
     fetchLLMGlobalConfigs();
-  }, []);
+  }, [fetchLLMGlobalConfigs]);
 
   // 当全局配置异步加载完成后，补齐当前选中节点的展示配置
   useEffect(() => {
@@ -209,6 +215,52 @@ const EditorPage = () => {
     }
   }, [llmGlobalConfigs, selectedNode, llmConfig]);
 
+  // 加载指定工作流
+  const loadWorkflowById = useCallback(async (workflowId: number) => {
+    try {
+      const result = await getWorkflow(workflowId);
+      if (result.code === 200) {
+        const workflow = result.data;
+        setWorkflowName(workflow.name);
+        setEngineType(workflow.engineType || 'dag');
+        setCurrentWorkflowId(workflow.id);
+        
+        const flowData = JSON.parse(workflow.flowData) as WorkflowCanvasData;
+        console.log('加载的工作流数据:', flowData);
+        
+        // 加载节点
+        const loadedNodes = normalizeWorkflowNodes(flowData.nodes || []);
+        setNodes(loadedNodes);
+        
+        // 加载连线并恢复箭头
+        const loadedEdges = (flowData.edges || []).map((edge) => ({
+          ...edge,
+          markerEnd: {
+            type: MarkerType.ArrowClosed,
+            width: 20,
+            height: 20,
+          },
+        }));
+        setEdges(loadedEdges);
+        
+        // 恢复输出节点配置
+        const outputNode = loadedNodes.find((node) => node.data?.type === 'output');
+        console.log('找到输出节点:', outputNode);
+        console.log('输出节点配置 - outputParams:', outputNode?.data?.outputParams);
+        console.log('输出节点配置 - responseContent:', outputNode?.data?.responseContent);
+
+        const rawOutputParams = outputNode?.data?.outputParams;
+        const rawResponseContent = outputNode?.data?.responseContent;
+        setOutputParams(Array.isArray(rawOutputParams) ? rawOutputParams as OutputParam[] : []);
+        setResponseContent(typeof rawResponseContent === 'string' ? rawResponseContent : '');
+        
+        message.success('工作流加载成功');
+      }
+    } catch {
+      message.error('工作流加载失败');
+    }
+  }, [setCurrentWorkflowId, setEdges, setNodes]);
+
   // 从 URL 加载工作流
   useEffect(() => {
     if (id) {
@@ -219,60 +271,7 @@ const EditorPage = () => {
         loadWorkflowById(workflowId);
       }
     }
-  }, [id]);
-
-  // 加载指定工作流
-  const loadWorkflowById = async (workflowId: number) => {
-    try {
-      const result = await getWorkflow(workflowId);
-      if (result.code === 200) {
-        const workflow = result.data;
-        setWorkflowName(workflow.name);
-        setEngineType(workflow.engineType || 'dag');
-        setCurrentWorkflowId(workflow.id);
-        
-        const flowData = JSON.parse(workflow.flowData);
-        console.log('加载的工作流数据:', flowData);
-        
-        // 加载节点
-        const loadedNodes = flowData.nodes || [];
-        setNodes(loadedNodes);
-        
-        // 加载连线并恢复箭头
-        const loadedEdges = (flowData.edges || []).map((edge: any) => ({
-          ...edge,
-          markerEnd: {
-            type: 'arrowclosed',
-            width: 20,
-            height: 20,
-          },
-        }));
-        setEdges(loadedEdges);
-        
-        // 恢复输出节点配置
-        const outputNode = loadedNodes.find((n: any) => n.data?.type === 'output');
-        console.log('找到输出节点:', outputNode);
-        console.log('输出节点配置 - outputParams:', outputNode?.data?.outputParams);
-        console.log('输出节点配置 - responseContent:', outputNode?.data?.responseContent);
-        
-        if (outputNode?.data?.outputParams) {
-          setOutputParams(outputNode.data.outputParams);
-        } else {
-          setOutputParams([]);
-        }
-        if (outputNode?.data?.responseContent) {
-          setResponseContent(outputNode.data.responseContent);
-        } else {
-          setResponseContent('');
-        }
-        
-        message.success('工作流加载成功');
-      }
-    } catch (error) {
-      message.error('工作流加载失败');
-      console.error(error);
-    }
-  };
+  }, [id, loadWorkflowById]);
 
   // 保存工作流
   const handleSave = async () => {
@@ -282,12 +281,7 @@ const EditorPage = () => {
     }
 
     const flowData = JSON.stringify({
-      nodes: nodes.map((node) => ({
-        id: node.id,
-        type: node.data?.type || node.type,
-        position: node.position,
-        data: node.data,
-      })),
+      nodes: serializeWorkflowNodes(nodes),
       edges: edges.map((edge) => ({
         id: edge.id,
         source: edge.source,
@@ -494,7 +488,7 @@ const EditorPage = () => {
       if (result.code === 200) {
         setWorkflows(result.data);
       }
-    } catch (error) {
+    } catch {
       message.error('获取工作流列表失败');
     } finally {
       setLoadingWorkflows(false);
@@ -513,30 +507,7 @@ const EditorPage = () => {
     setWorkflowName('未命名工作流');
     
     // 创建默认的输入和输出节点(上下排列)
-    const defaultNodes = [
-      {
-        id: 'input-default',
-        type: 'default',
-        position: { x: 250, y: 100 },
-        data: { 
-          label: '输入节点',
-          type: 'input'
-        },
-      },
-      {
-        id: 'output-default',
-        type: 'default',
-        position: { x: 250, y: 400 },
-        data: { 
-          label: '输出节点',
-          type: 'output',
-          outputParams: [],
-          responseContent: ''
-        },
-      },
-    ];
-    
-    setNodes(defaultNodes);
+    setNodes(createDefaultWorkflowNodes());
     setEdges([]);
     navigate('/editor');
     message.info('已创建新工作流');

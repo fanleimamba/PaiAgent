@@ -27,21 +27,43 @@ mysql -u root -p < src/main/resources/schema.sql
 
 ### 2. 配置数据库连接
 
-修改 `src/main/resources/application.yml` 中的数据库配置:
+本项目使用环境变量管理敏感配置。
 
-```yaml
-spring:
-  datasource:
-    url: jdbc:mysql://localhost:3306/paiagent?useUnicode=true&characterEncoding=utf-8&useSSL=false&serverTimezone=Asia/Shanghai
-    username: root
-    password: your_password
+复制环境变量模板并编辑：
+
+```bash
+cp .env.example .env
 ```
+
+编辑 `backend/.env` 文件，设置你的数据库密码：
+
+```bash
+# 必填：数据库密码
+MYSQL_PASSWORD=your_mysql_password
+
+# JWT 密钥（生产环境必须修改！）
+JWT_SECRET=your_jwt_secret_key_minimum_32_characters
+
+# 默认管理员账户（可选，留空则禁用）
+APP_AUTH_DEFAULT_USERNAME=admin
+APP_AUTH_DEFAULT_PASSWORD=admin123
+```
+
+或通过系统环境变量设置：
+```bash
+export MYSQL_PASSWORD=your_password
+export JWT_SECRET=your_jwt_secret
+```
+
+> **安全提示**：`.env` 文件已被加入 `.gitignore`，不会提交到版本库。
 
 ### 3. 运行项目
 
 ```bash
 ./mvnw spring-boot:run
 ```
+
+`.env` 会在启动时自动导入；如果你是从仓库根目录运行，也会自动读取 `backend/.env`。
 
 或使用 IDE 运行 `PaiAgentApplication.java`
 
@@ -54,12 +76,23 @@ spring:
 
 ### 4. 访问 API 文档
 
-启动成功后,访问: http://localhost:8080/swagger-ui.html
+启动成功后,访问: http://localhost:8084/swagger-ui.html
 
-## 默认账户
+## 默认账户配置
 
-- 用户名: admin
-- 密码: 123
+当前版本支持通过环境变量配置默认管理员账户（用于开发测试）：
+
+```bash
+APP_AUTH_DEFAULT_USERNAME=admin
+APP_AUTH_DEFAULT_PASSWORD=admin123
+```
+
+**生产环境建议**：
+- 禁用默认账户：将两个变量都设为空值
+- 或添加用户注册/管理功能（待实现）
+- 使用强密码（至少 8 位，包含大小写字母和数字）
+
+> ⚠️ **安全警告**：默认账户仅用于开发环境，生产环境必须修改或禁用！
 
 ## API 接口
 

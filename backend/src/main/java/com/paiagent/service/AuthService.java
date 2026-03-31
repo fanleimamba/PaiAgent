@@ -1,5 +1,6 @@
 package com.paiagent.service;
 
+import com.paiagent.config.JwtSecretProvider;
 import io.jsonwebtoken.Claims;
 import io.jsonwebtoken.Jwts;
 import io.jsonwebtoken.JwtException;
@@ -22,22 +23,24 @@ import java.util.UUID;
  */
 @Service
 public class AuthService {
-    
+
     /**
-     * 默认用户名
+     * 默认用户名（通过环境变量配置，不配置则禁用默认账户）
      */
-    private static final String DEFAULT_USERNAME = "admin";
-    
+    @Value("${paiagent.default-username:}")
+    private String defaultUsername;
+
     /**
-     * 默认密码
+     * 默认密码（通过环境变量配置，不配置则禁用默认账户）
      */
-    private static final String DEFAULT_PASSWORD = "123";
+    @Value("${paiagent.default-password:}")
+    private String defaultPassword;
 
     private static final String ACCESS_TOKEN_TYPE = "access";
     private static final String REFRESH_TOKEN_PREFIX = "auth:refresh:";
 
-    @Value("${paiagent.auth.jwt-secret}")
-    private String jwtSecret;
+    @Autowired
+    private JwtSecretProvider jwtSecretProvider;
 
     @Value("${paiagent.auth.access-token-expiration-minutes:120}")
     private long accessTokenExpirationMinutes;
@@ -52,8 +55,12 @@ public class AuthService {
      * 用户登录
      */
     public AuthTokens login(String username, String password) {
-        if (DEFAULT_USERNAME.equals(username) && DEFAULT_PASSWORD.equals(password)) {
-            return issueTokens(username);
+        // 检查是否配置了默认账户
+        if (defaultUsername != null && !defaultUsername.isEmpty()
+            && defaultPassword != null && !defaultPassword.isEmpty()) {
+            if (defaultUsername.equals(username) && defaultPassword.equals(password)) {
+                return issueTokens(username);
+            }
         }
         return null;
     }
@@ -158,7 +165,7 @@ public class AuthService {
     }
 
     private SecretKey getSigningKey() {
-        return Keys.hmacShaKeyFor(jwtSecret.getBytes(StandardCharsets.UTF_8));
+        return Keys.hmacShaKeyFor(jwtSecretProvider.getSecret().getBytes(StandardCharsets.UTF_8));
     }
 
     public record AuthTokens(String accessToken, String refreshToken, String username) {

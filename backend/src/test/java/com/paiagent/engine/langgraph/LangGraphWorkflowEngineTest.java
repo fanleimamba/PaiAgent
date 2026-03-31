@@ -20,7 +20,16 @@ import static org.junit.jupiter.api.Assertions.*;
 /**
  * LangGraph 工作流引擎集成测试
  */
-@SpringBootTest
+@SpringBootTest(properties = {
+        "paiagent.auth.jwt-secret=test-jwt-secret-key-for-spring-context-123456",
+        "minio.endpoint=http://localhost:9000",
+        "minio.accessKey=minioadmin",
+        "minio.secretKey=minioadmin",
+        "minio.bucketName=paiagent",
+        "minio.publicUrl=http://localhost:9000",
+        "spring.ai.openai.api-key=sk-test-placeholder",
+        "spring.datasource.password=123456"
+})
 class LangGraphWorkflowEngineTest {
     
     @Autowired

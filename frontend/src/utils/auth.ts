@@ -1,10 +1,10 @@
 import axios from 'axios';
-import { API_BASE_URL } from '../config/api';
+import { buildBackendUrl } from '../config/api';
 
 const ACCESS_TOKEN_KEY = 'token';
 const REFRESH_TOKEN_KEY = 'refreshToken';
 const USERNAME_KEY = 'username';
-const REFRESH_ENDPOINT = `${API_BASE_URL}/api/auth/refresh`;
+const REFRESH_ENDPOINT = buildBackendUrl('/api/auth/refresh');
 
 let refreshPromise: Promise<string | null> | null = null;
 

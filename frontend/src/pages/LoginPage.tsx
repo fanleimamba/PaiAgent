@@ -24,7 +24,7 @@ const LoginPage = () => {
       } else {
         message.error(result.message || '登录失败');
       }
-    } catch (error) {
+    } catch {
       message.error('登录失败,请检查网络连接');
     } finally {
       setLoading(false);
@@ -41,7 +41,6 @@ const LoginPage = () => {
         
         <Form
           name="login"
-          initialValues={{ username: 'admin', password: '123' }}
           onFinish={onFinish}
           size="large"
         >
@@ -76,10 +75,6 @@ const LoginPage = () => {
             </Button>
           </Form.Item>
         </Form>
-        
-        <div className="text-center text-sm text-gray-500">
-          默认账户: admin / 123
-        </div>
       </div>
     </div>
   );
