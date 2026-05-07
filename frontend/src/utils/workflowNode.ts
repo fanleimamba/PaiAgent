@@ -1,6 +1,6 @@
 import { Node } from '@xyflow/react';
 
-const REACT_FLOW_NODE_TYPE = 'default';
+const REACT_FLOW_NODE_TYPE = 'workflow';
 
 const getFallbackLabel = (nodeType: string, nodeId: string) => {
   switch (nodeType) {
@@ -12,6 +12,8 @@ const getFallbackLabel = (nodeType: string, nodeId: string) => {
       return '语音合成';
     case 'llm':
       return '大模型';
+    case 'react_agent':
+      return 'ReAct Agent';
     default:
       return nodeType || nodeId;
   }

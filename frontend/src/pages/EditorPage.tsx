@@ -88,7 +88,8 @@ const EditorPage = () => {
     model: '',
     temperature: 0.7,
     prompt: '',
-    skillName: ''
+    skillName: '',
+    maxSteps: 5
   });
   const [llmInputParams, setLlmInputParams] = useState<LlmInputParam[]>([]);
   const [llmOutputParams, setLlmOutputParams] = useState<LlmOutputParam[]>([]);
@@ -165,7 +166,8 @@ const EditorPage = () => {
         model: matchedGlobalConfig?.model || (node.data?.model as string) || '',
         temperature: matchedGlobalConfig?.temperature || (node.data?.temperature as number) || 0.7,
         prompt: (node.data?.prompt as string) || '',
-        skillName: (node.data?.skillName as string) || ''
+        skillName: (node.data?.skillName as string) || '',
+        maxSteps: (node.data?.maxSteps as number) || 5
       });
       setLlmInputParams((node.data?.inputParams as LlmInputParam[]) || []);
       setLlmOutputParams((node.data?.outputParams as LlmOutputParam[]) || []);
@@ -391,13 +393,16 @@ const EditorPage = () => {
       case 'input':
         return ['user_input'];
       case 'llm':
+      case 'react_agent':
       case 'openai':
       case 'deepseek':
       case 'qwen':
       case 'step':
       case 'zhipu':
       case 'ai_ping':
-        return ['output', 'tokens'];
+        return nodeType === 'react_agent'
+          ? ['output', 'finalAnswer', 'steps', 'tokens']
+          : ['output', 'tokens'];
       case 'tts':
         return ['audioUrl', 'fileName', 'output'];
       default:
@@ -588,6 +593,7 @@ const EditorPage = () => {
       temperature: useGlobalConfig ? 0.7 : llmConfig.temperature,
       prompt: llmConfig.prompt,
       skillName: llmConfig.skillName,
+      maxSteps: llmConfig.maxSteps,
       inputParams: llmInputParams,
       outputParams: llmOutputParams
     };
@@ -790,6 +796,7 @@ const EditorPage = () => {
         temperature: useGlobalConfig ? 0.7 : llmConfig.temperature,
         prompt: llmConfig.prompt,
         skillName: llmConfig.skillName,
+        maxSteps: llmConfig.maxSteps,
         inputParams: llmInputParams,
         outputParams: llmOutputParams
       };
@@ -846,32 +853,36 @@ const EditorPage = () => {
   }, [ttsConfig, ttsInputParams, ttsOutputParams, selectedNode]);
 
   const selectedNodeType = String(selectedNode?.data?.type || '');
-  const isGenericLlmNode = selectedNodeType === 'llm';
+  const isReActAgentNode = selectedNodeType === 'react_agent';
+  const isGenericLlmNode = selectedNodeType === 'llm' || isReActAgentNode;
   const selectedNodeProvider = resolveSelectedNodeProvider(selectedNode);
   const availableLlmConfigs = isGenericLlmNode
     ? llmGlobalConfigs
     : llmGlobalConfigs.filter(
         (config) => normalizeProviderKey(config.provider) === selectedNodeProvider
       );
+  const selectedNodeLabel = String(selectedNode?.data?.label || selectedNode?.id || '');
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50">
+    <div className="workflow-editor-shell">
       {/* 顶部工具栏 */}
-      <div className="bg-white shadow-sm px-6 py-4 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <h1 className="text-2xl font-bold text-gray-800">PaiAgent</h1>
-          <Input
-            value={workflowName}
-            onChange={(e) => setWorkflowName(e.target.value)}
-            className="w-64"
-            placeholder="工作流名称"
-            bordered={false}
-            style={{ borderBottom: '2px solid #e5e7eb' }}
-          />
+      <header className="workflow-topbar">
+        <div className="workflow-title-group">
+          <div className="workflow-brand-mark">P</div>
+          <div>
+            <div className="workflow-brand">PaiAgent</div>
+            <Input
+              value={workflowName}
+              onChange={(e) => setWorkflowName(e.target.value)}
+              className="workflow-name-input"
+              placeholder="工作流名称"
+              bordered={false}
+            />
+          </div>
           <Select
             value={engineType}
             onChange={(value) => setEngineType(value)}
-            className="w-40"
+            className="workflow-engine-select"
             options={[
               { value: 'dag', label: 'DAG 引擎' },
               { value: 'langgraph', label: 'LangGraph 引擎' }
@@ -879,19 +890,17 @@ const EditorPage = () => {
           />
         </div>
         
-        <div className="flex items-center gap-3">
+        <div className="workflow-actions">
           <LLMConfigModal />
           <Button
             icon={<PlusOutlined />}
             onClick={handleCreateNew}
-            size="large"
           >
             新建
           </Button>
           <Button
             icon={<FolderOpenOutlined />}
             onClick={handleOpenLoadModal}
-            size="large"
           >
             加载
           </Button>
@@ -900,56 +909,59 @@ const EditorPage = () => {
             icon={<SaveOutlined />}
             onClick={handleSave}
             loading={saving}
-            size="large"
           >
             保存
           </Button>
           <Button
-            type="primary"
             icon={<BugOutlined />}
             onClick={handleOpenDebug}
             disabled={!currentWorkflowId}
-            size="large"
           >
             调试
           </Button>
-          <div className="ml-4 flex items-center gap-2 px-3 py-1 bg-gray-50 rounded-lg">
-            <span className="text-gray-600">👤 {username}</span>
+          <div className="workflow-user">
+            <span className="workflow-user-name">{username}</span>
             <Button
               icon={<LogoutOutlined />}
               onClick={handleLogout}
               type="text"
+              size="small"
             >
               登出
             </Button>
           </div>
         </div>
-      </div>
+      </header>
 
       {/* 主要内容区域 */}
-      <div className="flex-1 flex overflow-hidden gap-4 p-4">
+      <div className="workflow-workbench">
         {/* 左侧节点面板 */}
-        <div className="w-64 flex-shrink-0 bg-white rounded-lg shadow-sm overflow-hidden">
+        <aside className="workflow-left-panel">
           <NodePanel onDragStart={handleDragStart} />
-        </div>
+        </aside>
 
         {/* 中间画布 */}
-        <div className="flex-1 bg-white rounded-lg shadow-sm overflow-hidden">
+        <main className="workflow-canvas-panel">
           <FlowCanvas onNodeClick={handleNodeClick} />
-        </div>
+        </main>
 
         {/* 右侧配置面板 */}
-        <div className="w-[420px] flex-shrink-0 bg-white rounded-lg shadow-sm overflow-y-auto p-4">
-          <h3 className="text-lg font-semibold mb-4 text-gray-800">节点配置</h3>
+        <aside className="workflow-config-panel">
+          <div className="workflow-panel-heading">
+            <div>
+              <p className="workflow-panel-kicker">Inspector</p>
+              <h3>节点配置</h3>
+            </div>
+            {selectedNode && <span className="workflow-node-pill">{selectedNodeType || 'node'}</span>}
+          </div>
           {selectedNode ? (
             <div>
-              <div className="mb-4 p-3 bg-gray-50 rounded-lg">
-                <p className="text-sm text-gray-500 mb-1">节点 ID</p>
-                <p className="text-gray-700 font-medium">{selectedNode.id}</p>
-              </div>
-              <div className="mb-4 p-3 bg-gray-50 rounded-lg">
-                <p className="text-sm text-gray-500 mb-1">节点类型</p>
-                <p className="text-gray-700 font-medium">{String(selectedNode.data?.type || '')}</p>
+              <div className="workflow-selected-card">
+                <div className="workflow-selected-icon">{selectedNodeLabel.slice(0, 1).toUpperCase()}</div>
+                <div className="min-w-0">
+                  <p className="workflow-selected-title">{selectedNodeLabel}</p>
+                  <p className="workflow-selected-meta">{selectedNode.id}</p>
+                </div>
               </div>
                 
                 {/* 输入节点配置 */}
@@ -1200,6 +1212,24 @@ const EditorPage = () => {
                         💡 使用 {'{{'} 参数名 {'}'} 引用上面定义的输入参数
                       </div>
                     </Form.Item>
+
+                    {isReActAgentNode && (
+                      <Form.Item label="最大 ReAct 步数">
+                        <Input
+                          type="number"
+                          min="1"
+                          max="20"
+                          value={llmConfig.maxSteps}
+                          onChange={(e) => setLlmConfig({
+                            ...llmConfig,
+                            maxSteps: Math.min(20, Math.max(1, parseInt(e.target.value, 10) || 5))
+                          })}
+                        />
+                        <div className="text-xs text-gray-500 mt-1">
+                          每一步只能做一次工具调用或给出最终答案，超过步数会停止执行
+                        </div>
+                      </Form.Item>
+                    )}
 
                     {/* 全局配置选择 */}
                     <Form.Item
@@ -1520,11 +1550,12 @@ const EditorPage = () => {
                 )}
               </div>
             ) : (
-              <div className="text-center py-12">
-                <p className="text-gray-400 text-sm">请选择一个节点</p>
+              <div className="workflow-empty-inspector">
+                <div className="workflow-empty-icon">+</div>
+                <p>未选择节点</p>
               </div>
             )}
-        </div>
+        </aside>
       </div>
 
       {/* 调试抽屉 */}

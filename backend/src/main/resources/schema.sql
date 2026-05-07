@@ -81,6 +81,11 @@ INSERT INTO node_definition (node_type, display_name, category, icon, input_sche
  '{"type": "object", "properties": {"input": {"type": "string"}}}',
  '{"type": "object", "properties": {"output": {"type": "string"}, "tokens": {"type": "number"}}}',
  '{"type": "object", "properties": {"apiKey": {"type": "string"}, "model": {"type": "string", "default": "claude-3-5-sonnet-20241022"}, "prompt": {"type": "string"}, "temperature": {"type": "number", "default": 0.7}, "maxTokens": {"type": "number", "default": 1000}}}'),
+
+('react_agent', 'ReAct Agent', 'LLM', 'RA',
+ '{"type": "object", "properties": {"input": {"type": "string"}}}',
+ '{"type": "object", "properties": {"output": {"type": "string"}, "finalAnswer": {"type": "string"}, "toolTrace": {"type": "array"}, "steps": {"type": "number"}, "tokens": {"type": "number"}}}',
+ '{"type": "object", "properties": {"provider": {"type": "string"}, "configId": {"type": "number"}, "apiKey": {"type": "string"}, "model": {"type": "string"}, "prompt": {"type": "string"}, "temperature": {"type": "number", "default": 0.7}, "maxSteps": {"type": "number", "default": 5}, "tools": {"type": "array"}}}'),
  
 ('tts', '超拟人音频合成', 'TOOL', '🔊',
  '{"type": "object", "properties": {"text": {"type": "string"}}}',

@@ -5,7 +5,10 @@ import {
   Controls,
   MiniMap,
   Node,
+  NodeProps,
   Connection,
+  Handle,
+  Position,
   addEdge,
   useNodesState,
   useEdgesState,
@@ -20,6 +23,89 @@ import { useWorkflowStore } from '../store/workflowStore';
 interface FlowCanvasProps {
   onNodeClick: (node: Node) => void;
 }
+
+type WorkflowNodeData = {
+  label?: string;
+  type?: string;
+  provider?: string;
+  model?: string;
+  skillName?: string;
+  inputParams?: unknown[];
+  outputParams?: unknown[];
+  maxSteps?: number;
+};
+
+type WorkflowCardNode = Node<WorkflowNodeData, 'workflow'>;
+
+const WORKFLOW_EDGE_STYLE = {
+  stroke: '#8b9bb4',
+  strokeWidth: 2,
+};
+
+const WORKFLOW_EDGE_MARKER = {
+  type: MarkerType.ArrowClosed,
+  width: 20,
+  height: 20,
+};
+
+const nodeMeta: Record<string, { icon: string; tone: string; caption: string }> = {
+  input: { icon: 'IN', tone: 'node-tone-green', caption: 'Start input' },
+  output: { icon: 'OUT', tone: 'node-tone-purple', caption: 'Final response' },
+  llm: { icon: 'AI', tone: 'node-tone-blue', caption: 'Model call' },
+  react_agent: { icon: 'RA', tone: 'node-tone-blue', caption: 'ReAct loop' },
+  openai: { icon: 'AI', tone: 'node-tone-blue', caption: 'OpenAI' },
+  deepseek: { icon: 'DS', tone: 'node-tone-blue', caption: 'DeepSeek' },
+  qwen: { icon: 'QW', tone: 'node-tone-blue', caption: 'Qwen' },
+  zhipu: { icon: 'ZP', tone: 'node-tone-blue', caption: 'ZhiPu' },
+  ai_ping: { icon: 'AP', tone: 'node-tone-blue', caption: 'AIPing' },
+  tts: { icon: 'TTS', tone: 'node-tone-amber', caption: 'Audio tool' },
+};
+
+const getNodeMeta = (type?: string) => (
+  nodeMeta[type || ''] || { icon: 'FN', tone: 'node-tone-slate', caption: 'Workflow node' }
+);
+
+const WorkflowNodeCard = ({ data, selected }: NodeProps<WorkflowCardNode>) => {
+  const workflowType = data.type || '';
+  const meta = getNodeMeta(workflowType);
+  const inputCount = Array.isArray(data.inputParams) ? data.inputParams.length : 0;
+  const outputCount = Array.isArray(data.outputParams) ? data.outputParams.length : 0;
+  const modelLabel = data.model || data.provider || data.skillName || meta.caption;
+
+  return (
+    <div className={`workflow-node ${selected ? 'is-selected' : ''}`}>
+      {workflowType !== 'input' && (
+        <Handle
+          type="target"
+          position={Position.Top}
+          className="workflow-node-handle"
+        />
+      )}
+      <div className="workflow-node-header">
+        <div className={`workflow-node-icon ${meta.tone}`}>{meta.icon}</div>
+        <div className="workflow-node-title-wrap">
+          <div className="workflow-node-title">{data.label || workflowType || '未命名节点'}</div>
+          <div className="workflow-node-subtitle">{modelLabel}</div>
+        </div>
+      </div>
+      <div className="workflow-node-footer">
+        <span>{workflowType || 'node'}</span>
+        <span>{inputCount} in / {outputCount} out</span>
+      </div>
+      {workflowType !== 'output' && (
+        <Handle
+          type="source"
+          position={Position.Bottom}
+          className="workflow-node-handle"
+        />
+      )}
+    </div>
+  );
+};
+
+const nodeTypes = {
+  workflow: WorkflowNodeCard,
+};
 
 /**
  * 中间画布组件
@@ -40,11 +126,9 @@ const FlowCanvas = ({ onNodeClick }: FlowCanvasProps) => {
     console.log('Store edges changed:', storeEdges);
     const edgesWithMarkers = storeEdges.map(edge => ({
       ...edge,
-      markerEnd: {
-        type: MarkerType.ArrowClosed,
-        width: 20,
-        height: 20,
-      },
+      type: 'smoothstep',
+      style: WORKFLOW_EDGE_STYLE,
+      markerEnd: WORKFLOW_EDGE_MARKER,
     }));
     setEdges(edgesWithMarkers);
   }, [storeEdges, setEdges]);
@@ -76,11 +160,9 @@ const FlowCanvas = ({ onNodeClick }: FlowCanvasProps) => {
     setEdges((eds) => {
       const newEdge = {
         ...connection,
-        markerEnd: {
-          type: MarkerType.ArrowClosed,
-          width: 20,
-          height: 20,
-        },
+        type: 'smoothstep',
+        style: WORKFLOW_EDGE_STYLE,
+        markerEnd: WORKFLOW_EDGE_MARKER,
       };
       console.log('New edge:', newEdge);
       const updatedEdges = addEdge(newEdge, eds);
@@ -107,7 +189,7 @@ const FlowCanvas = ({ onNodeClick }: FlowCanvasProps) => {
 
       const newNode: Node = {
         id: `${type}-${Date.now()}`,
-        type: 'default',
+        type: 'workflow',
         position,
         data: { label: label || type, type },
       };
@@ -144,18 +226,25 @@ const FlowCanvas = ({ onNodeClick }: FlowCanvasProps) => {
         onDrop={onDrop}
         onDragOver={onDragOver}
         onNodeClick={handleNodeClick}
+        nodeTypes={nodeTypes}
         defaultEdgeOptions={{
-          markerEnd: {
-            type: MarkerType.ArrowClosed,
-            width: 20,
-            height: 20,
-          },
+          type: 'smoothstep',
+          style: WORKFLOW_EDGE_STYLE,
+          markerEnd: WORKFLOW_EDGE_MARKER,
         }}
         fitView
+        fitViewOptions={{ padding: 0.28 }}
+        snapToGrid
+        snapGrid={[16, 16]}
       >
-        <Background />
-        <Controls />
-        <MiniMap />
+        <Background color="#d8dee9" gap={18} size={1.2} />
+        <Controls className="workflow-controls" />
+        <MiniMap
+          pannable
+          zoomable
+          className="workflow-minimap"
+          nodeColor={(node) => getNodeMeta(String(node.data?.type || '')).tone.includes('green') ? '#22c55e' : '#64748b'}
+        />
       </ReactFlow>
     </div>
   );

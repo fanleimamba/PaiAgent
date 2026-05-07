@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Collapse, message } from 'antd';
+import { Collapse, Tag, message } from 'antd';
 import { getNodeTypes, NodeDefinition } from '../api/workflow';
 
 interface NodePanelProps {
@@ -40,26 +40,40 @@ const NodePanel = ({ onDragStart }: NodePanelProps) => {
   const llmNodes = nodeTypes.filter((node) => node.category === 'LLM');
   const toolNodes = nodeTypes.filter((node) => node.category === 'TOOL');
 
+  const getNodeTone = (node: NodeDefinition) => {
+    if (node.nodeType === 'input') return 'node-library-green';
+    if (node.nodeType === 'output') return 'node-library-purple';
+    if (node.category === 'TOOL') return 'node-library-amber';
+    return 'node-library-blue';
+  };
+
   const renderNodeItem = (node: NodeDefinition) => (
     <div
       key={node.nodeType}
       draggable
       onDragStart={(e) => onDragStart(e, node.nodeType, node.displayName)}
-      className="p-3 mb-2 bg-white border border-gray-200 rounded cursor-move hover:border-blue-400 hover:shadow-md transition-all"
+      className="node-library-item"
     >
-      <div className="flex items-center">
-        <span className="text-2xl mr-2">{node.icon}</span>
-        <span className="font-medium text-gray-700">{node.displayName}</span>
+      <div className={`node-library-icon ${getNodeTone(node)}`}>{node.icon}</div>
+      <div className="min-w-0 flex-1">
+        <div className="node-library-title">{node.displayName}</div>
+        <div className="node-library-meta">{node.nodeType}</div>
       </div>
+      <span className="node-library-drag" aria-hidden="true">⋮⋮</span>
     </div>
   );
 
   const items = [
     {
       key: 'llm',
-      label: <span className="font-semibold">🤖 大模型节点</span>,
+      label: (
+        <div className="node-library-section-title">
+          <span>大模型节点</span>
+          <Tag color="blue">{llmNodes.length}</Tag>
+        </div>
+      ),
       children: (
-        <div>
+        <div className="space-y-2">
           {llmNodes.length > 0 ? (
             llmNodes.map(renderNodeItem)
           ) : (
@@ -70,9 +84,14 @@ const NodePanel = ({ onDragStart }: NodePanelProps) => {
     },
     {
       key: 'tool',
-      label: <span className="font-semibold">🔧 工具节点</span>,
+      label: (
+        <div className="node-library-section-title">
+          <span>工具节点</span>
+          <Tag color="gold">{toolNodes.length}</Tag>
+        </div>
+      ),
       children: (
-        <div>
+        <div className="space-y-2">
           {toolNodes.length > 0 ? (
             toolNodes.map(renderNodeItem)
           ) : (
@@ -85,10 +104,13 @@ const NodePanel = ({ onDragStart }: NodePanelProps) => {
 
   return (
     <div className="h-full flex flex-col overflow-hidden">
-      <div className="p-4 border-b border-gray-100">
-        <h3 className="font-bold text-gray-800">节点库</h3>
+      <div className="node-library-header">
+        <div>
+          <h3 className="node-library-heading">节点库</h3>
+          <p className="node-library-desc">流程组件</p>
+        </div>
       </div>
-      <div className="flex-1 overflow-y-auto p-4">
+      <div className="node-library-body">
         {loading ? (
           <div className="text-center py-8 text-gray-400">加载中...</div>
         ) : (
@@ -99,9 +121,7 @@ const NodePanel = ({ onDragStart }: NodePanelProps) => {
               items={items}
               bordered={false}
             />
-            <div className="mt-4 p-3 bg-blue-50 rounded-lg text-sm text-gray-600">
-              💡 拖拽节点到画布中使用
-            </div>
+            <div className="node-library-tip">输入 · 模型 · 工具 · 输出</div>
           </>
         )}
       </div>

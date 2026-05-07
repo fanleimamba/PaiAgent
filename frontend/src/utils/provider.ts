@@ -56,7 +56,7 @@ export const isLegacyProviderNodeType = (nodeType?: string | null) => {
 };
 
 export const isLlmNodeType = (nodeType?: string | null) => {
-  return nodeType === 'llm' || isLegacyProviderNodeType(nodeType);
+  return nodeType === 'llm' || nodeType === 'react_agent' || isLegacyProviderNodeType(nodeType);
 };
 
 export const getProviderFromNodeType = (nodeType?: string | null) => {
