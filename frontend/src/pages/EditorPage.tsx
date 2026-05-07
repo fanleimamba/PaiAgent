@@ -955,7 +955,7 @@ const EditorPage = () => {
             {selectedNode && <span className="workflow-node-pill">{selectedNodeType || 'node'}</span>}
           </div>
           {selectedNode ? (
-            <div>
+            <div className="workflow-config-body">
               <div className="workflow-selected-card">
                 <div className="workflow-selected-icon">{selectedNodeLabel.slice(0, 1).toUpperCase()}</div>
                 <div className="min-w-0">
@@ -966,7 +966,7 @@ const EditorPage = () => {
                 
                 {/* 输入节点配置 */}
                 {selectedNode.data?.type === 'input' && (
-                  <Form layout="vertical" className="mt-4">
+                  <Form layout="vertical" className="workflow-config-form">
                     <Form.Item label="变量名">
                       <Input value="user_input" disabled />
                     </Form.Item>
@@ -984,10 +984,10 @@ const EditorPage = () => {
 
                 {/* 输出节点配置 */}
                 {selectedNode.data?.type === 'output' && (
-                  <Form layout="vertical" className="mt-4">
+                  <Form layout="vertical" className="workflow-config-form">
                     {/* 输出配置 */}
-                    <div className="mb-6">
-                      <div className="flex justify-between items-center mb-3">
+                    <div className="workflow-config-section">
+                      <div className="workflow-config-section-header">
                         <label className="font-medium text-gray-700">输出配置</label>
                         <Button 
                           type="dashed" 
@@ -1000,7 +1000,7 @@ const EditorPage = () => {
                       </div>
                       
                       {outputParams.map((param, index) => (
-                        <div key={index} className="flex items-start gap-2 mb-3">
+                        <div key={index} className="workflow-param-row">
                           <div>
                             <Input 
                               placeholder="参数名"
@@ -1052,7 +1052,7 @@ const EditorPage = () => {
                       ))}
                       
                       {outputParams.length === 0 && (
-                        <div className="text-gray-400 text-center py-4 border border-dashed border-gray-300 rounded">
+                        <div className="workflow-config-empty">
                           点击"添加"按钮添加输出参数
                         </div>
                       )}
@@ -1066,7 +1066,7 @@ const EditorPage = () => {
                         value={responseContent}
                         onChange={(e) => setResponseContent(e.target.value)}
                       />
-                      <div className="mt-2 text-xs text-gray-500">
+                      <div className="workflow-field-hint">
                         💡 提示: 使用 {'{{'} 参数名 {'}'} 引用上面定义的参数
                       </div>
                     </Form.Item>
@@ -1079,10 +1079,10 @@ const EditorPage = () => {
 
                 {/* LLM 节点配置 */}
                 {isLlmNodeType(selectedNodeType) && (
-                  <Form layout="vertical" className="mt-4">
+                  <Form layout="vertical" className="workflow-config-form">
                     {/* 输入参数配置 */}
-                    <div className="mb-6">
-                      <div className="flex justify-between items-center mb-3">
+                    <div className="workflow-config-section">
+                      <div className="workflow-config-section-header">
                         <label className="font-medium text-gray-700">输入参数</label>
                         <Button 
                           type="dashed" 
@@ -1095,7 +1095,7 @@ const EditorPage = () => {
                       </div>
                       
                       {llmInputParams.map((param, index) => (
-                        <div key={index} className="flex items-start gap-2 mb-3">
+                        <div key={index} className="workflow-param-row">
                           <Input 
                             placeholder="参数名"
                             value={param.name}
@@ -1143,15 +1143,15 @@ const EditorPage = () => {
                       ))}
                       
                       {llmInputParams.length === 0 && (
-                        <div className="text-gray-400 text-center py-4 border border-dashed border-gray-300 rounded">
+                        <div className="workflow-config-empty">
                           点击"添加"按钮添加输入参数
                         </div>
                       )}
                     </div>
 
                     {/* 输出参数配置 */}
-                    <div className="mb-6">
-                      <div className="flex justify-between items-center mb-3">
+                    <div className="workflow-config-section">
+                      <div className="workflow-config-section-header">
                         <label className="font-medium text-gray-700">输出参数</label>
                         <Button 
                           type="dashed" 
@@ -1164,7 +1164,7 @@ const EditorPage = () => {
                       </div>
                       
                       {llmOutputParams.map((param, index) => (
-                        <div key={index} className="flex items-start gap-2 mb-3">
+                        <div key={index} className="workflow-param-row">
                           <Input 
                             placeholder="变量名"
                             value={param.name}
@@ -1194,7 +1194,7 @@ const EditorPage = () => {
                       ))}
                       
                       {llmOutputParams.length === 0 && (
-                        <div className="text-gray-400 text-center py-4 border border-dashed border-gray-300 rounded">
+                        <div className="workflow-config-empty">
                           点击"添加"按钮添加输出参数
                         </div>
                       )}
@@ -1208,7 +1208,7 @@ const EditorPage = () => {
                         onChange={(e) => setLlmConfig({...llmConfig, prompt: e.target.value})}
                         style={{ fontFamily: 'monospace', fontSize: '12px' }}
                       />
-                      <div className="text-xs text-gray-500 mt-1">
+                      <div className="workflow-field-hint">
                         💡 使用 {'{{'} 参数名 {'}'} 引用上面定义的输入参数
                       </div>
                     </Form.Item>
@@ -1225,7 +1225,7 @@ const EditorPage = () => {
                             maxSteps: Math.min(20, Math.max(1, parseInt(e.target.value, 10) || 5))
                           })}
                         />
-                        <div className="text-xs text-gray-500 mt-1">
+                        <div className="workflow-field-hint">
                           每一步只能做一次工具调用或给出最终答案，超过步数会停止执行
                         </div>
                       </Form.Item>
@@ -1274,7 +1274,7 @@ const EditorPage = () => {
                             </Select.Option>
                           ))}
                       </Select>
-                      <div className="text-xs text-gray-500 mt-1">
+                      <div className="workflow-field-hint">
                         💡 选择全局配置后无需填写下方 API 信息
                       </div>
                     </Form.Item>
@@ -1292,7 +1292,7 @@ const EditorPage = () => {
                             />
                           </Form.Item>
                         )}
-                        <div className="text-xs text-orange-500 mb-2 px-2 py-1 bg-orange-50 rounded">
+                        <div className="workflow-config-warning">
                           ⚠️ 未选择全局配置，请手动填写以下 API 信息
                         </div>
                         <Form.Item label="API 地址" required>
@@ -1301,7 +1301,7 @@ const EditorPage = () => {
                             value={llmConfig.apiUrl}
                             onChange={(e) => setLlmConfig({...llmConfig, apiUrl: e.target.value})}
                           />
-                          <div className="text-xs text-gray-500 mt-1">
+                          <div className="workflow-field-hint">
                             填写兼容接口根地址，不要追加 <code>/v1</code> 或 <code>/v1/chat/completions</code>
                           </div>
                         </Form.Item>
@@ -1328,7 +1328,7 @@ const EditorPage = () => {
                             value={llmConfig.temperature}
                             onChange={(e) => setLlmConfig({...llmConfig, temperature: parseFloat(e.target.value) || 0.7})}
                           />
-                          <div className="text-xs text-gray-500 mt-1">
+                          <div className="workflow-field-hint">
                             控制输出随机性，范围 0-2，值越高越随机
                           </div>
                         </Form.Item>
@@ -1337,7 +1337,7 @@ const EditorPage = () => {
 
                     {/* 已选择全局配置时显示配置信息 */}
                     {llmConfig.configId && (
-                      <div className="text-xs text-gray-500 mb-4 p-3 bg-gray-50 rounded">
+                      <div className="workflow-config-summary">
                         <div className="font-medium mb-2">当前使用全局配置：</div>
                         <div>供应商: {getProviderLabel(llmConfig.provider)}</div>
                         <div>API 地址: {llmConfig.apiUrl}</div>
@@ -1351,7 +1351,7 @@ const EditorPage = () => {
                         value={llmConfig.skillName}
                         onChange={(value) => setLlmConfig({...llmConfig, skillName: value || ''})}
                       />
-                      <div className="text-xs text-gray-500 mt-1">
+                      <div className="workflow-field-hint">
                         选择一个技能来增强 LLM 的能力，LLM 会自动获取技能指南
                       </div>
                     </Form.Item>
@@ -1363,10 +1363,10 @@ const EditorPage = () => {
 
                 {/* TTS 节点配置 (超拟人音频) */}
                 {selectedNode.data?.type === 'tts' && (
-                  <Form layout="vertical" className="mt-4">
+                  <Form layout="vertical" className="workflow-config-form">
                     {/* 输入配置 */}
-                    <div className="mb-6">
-                      <div className="flex justify-between items-center mb-3">
+                    <div className="workflow-config-section">
+                      <div className="workflow-config-section-header">
                         <label className="font-medium text-gray-700">输入配置</label>
                         <Button 
                           type="dashed" 
@@ -1380,7 +1380,7 @@ const EditorPage = () => {
                       
                       {ttsInputParams.map((param, index) => (
                         <div key={index} className="mb-4 p-3 bg-gray-50 rounded">
-                          <div className="flex items-center gap-2 mb-2">
+                          <div className="workflow-param-row is-compact">
                             <Input 
                               placeholder="参数名 (如: text)"
                               value={param.name}
@@ -1429,7 +1429,7 @@ const EditorPage = () => {
                       ))}
                       
                       {ttsInputParams.length === 0 && (
-                        <div className="text-center py-4 text-gray-400 text-sm border border-dashed rounded">
+                        <div className="workflow-config-empty">
                           暂无输入参数,点击"添加"按钮创建 text 参数
                         </div>
                       )}
@@ -1471,8 +1471,8 @@ const EditorPage = () => {
                     </div>
 
                     {/* 输出配置 */}
-                    <div className="mb-6">
-                      <div className="flex justify-between items-center mb-3">
+                    <div className="workflow-config-section">
+                      <div className="workflow-config-section-header">
                         <label className="font-medium text-gray-700">输出配置</label>
                         <Button 
                           type="dashed" 
@@ -1485,7 +1485,7 @@ const EditorPage = () => {
                       </div>
                       
                       {ttsOutputParams.map((param, index) => (
-                        <div key={index} className="flex items-center gap-2 mb-3">
+                        <div key={index} className="workflow-param-row">
                           <Input 
                             placeholder="参数名 (如: voice_url)"
                             value={param.name}
@@ -1508,15 +1508,15 @@ const EditorPage = () => {
                       ))}
                       
                       {ttsOutputParams.length === 0 && (
-                        <div className="text-center py-4 text-gray-400 text-sm border border-dashed rounded">
+                        <div className="workflow-config-empty">
                           暂无输出参数,点击"添加"按钮创建 voice_url 参数
                         </div>
                       )}
                     </div>
 
                     {/* 基本信息 */}
-                    <div className="mb-4">
-                      <label className="font-medium text-gray-700 block mb-3">基本信息</label>
+                    <div className="workflow-config-section">
+                      <label className="workflow-config-section-title">基本信息</label>
                       <Form.Item label="API Key">
                         <Input.Password
                           placeholder="请输入阿里百炼 API Key"
@@ -1544,7 +1544,7 @@ const EditorPage = () => {
                  selectedNode.data?.type !== 'output' &&
                  !isLlmNodeType(selectedNodeType) &&
                  selectedNode.data?.type !== 'tts' && (
-                  <div className="mt-4 text-center text-gray-400 text-sm">
+                  <div className="workflow-config-empty">
                     该节点暂无可配置项
                   </div>
                 )}
