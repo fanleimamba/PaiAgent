@@ -129,6 +129,7 @@ public class LangGraphWorkflowEngine implements WorkflowExecutor {
             ExecutionResponse response = new ExecutionResponse();
             response.setExecutionId(record.getId());
             response.setStatus(status);
+            response.setInputData(record.getInputData());
             
             // 转换为 ExecutionResponse.NodeResult 格式
             java.util.List<ExecutionResponse.NodeResult> nodeResults = new ArrayList<>();
@@ -176,6 +177,7 @@ public class LangGraphWorkflowEngine implements WorkflowExecutor {
             ExecutionResponse response = new ExecutionResponse();
             response.setExecutionId(record.getId());
             response.setStatus("FAILED");
+            response.setInputData(record.getInputData());
             response.setNodeResults(new ArrayList<>());
             response.setOutputData(null);
             response.setDuration(duration);

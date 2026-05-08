@@ -12,9 +12,9 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 
 /**
- * 全局 LLM 配置管理控制器
+ * 全局模型配置管理控制器。
  */
-@Tag(name = "全局LLM配置接口")
+@Tag(name = "全局模型配置接口")
 @RestController
 @RequestMapping("/api/llm-config")
 public class LLMConfigController {

@@ -150,6 +150,7 @@ public class WorkflowEngine implements WorkflowExecutor {
         ExecutionResponse response = new ExecutionResponse();
         response.setExecutionId(record.getId());
         response.setStatus(status);
+        response.setInputData(inputDataJson);
         response.setNodeResults(nodeResults);
         response.setOutputData(outputData);
         response.setDuration(duration);

@@ -7,6 +7,7 @@ export interface LLMGlobalConfig {
   apiUrl: string;
   apiKey: string;
   model: string;
+  ttsModel?: string;
   temperature: number;
   isDefault: number;
   createdAt: string;
@@ -20,6 +21,7 @@ export interface LLMConfigRequest {
   apiUrl: string;
   apiKey: string;
   model: string;
+  ttsModel?: string;
   temperature?: number;
   isDefault?: number;
 }

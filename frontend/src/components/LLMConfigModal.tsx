@@ -9,10 +9,9 @@ import {
   Table,
   Space,
   message,
-  Popconfirm,
-  Tag
+  Popconfirm
 } from 'antd';
-import { SettingOutlined, PlusOutlined, EditOutlined, DeleteOutlined, StarOutlined, StarFilled } from '@ant-design/icons';
+import { SettingOutlined, PlusOutlined, EditOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useLLMConfigStore } from '../store/llmConfigStore';
 import { LLMGlobalConfig, LLMConfigRequest } from '../api/llmConfig';
 import { getProviderLabel, normalizeProviderKey } from '../utils/provider';
@@ -42,7 +41,6 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
     fetchAllConfigs,
     saveConfig,
     deleteConfig,
-    setDefaultConfig,
     clearError
   } = useLLMConfigStore();
 
@@ -96,10 +94,10 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
     if (config) {
       form.setFieldsValue({
         provider: config.provider,
-        configName: config.configName,
         apiUrl: config.apiUrl,
         apiKey: config.apiKey,
         model: config.model,
+        ttsModel: config.ttsModel,
         temperature: config.temperature
       });
     } else {
@@ -121,10 +119,11 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
       const request: LLMConfigRequest = {
         id: editingConfig?.id,
         provider,
-        configName: values.configName,
+        configName: editingConfig?.configName || buildInternalConfigName(provider, values.model, values.ttsModel),
         apiUrl: values.apiUrl,
         apiKey: values.apiKey,
         model: values.model,
+        ttsModel: values.ttsModel,
         temperature: values.temperature
       };
 
@@ -138,17 +137,15 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
     }
   };
 
+  const buildInternalConfigName = (provider: string, model?: string, ttsModel?: string) => {
+    const modelPart = (model || ttsModel || 'model').trim().replace(/\s+/g, '-');
+    return `${provider}-${modelPart}-${Date.now()}`;
+  };
+
   const handleDelete = async (id: number) => {
     const success = await deleteConfig(id);
     if (success) {
       message.success('配置已删除');
-    }
-  };
-
-  const handleSetDefault = async (id: number) => {
-    const success = await setDefaultConfig(id);
-    if (success) {
-      message.success('已设置为默认配置');
     }
   };
 
@@ -164,13 +161,6 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
       }
     },
     {
-      title: '配置别名',
-      dataIndex: 'configName',
-      key: 'configName',
-      ellipsis: true,
-      width: 132
-    },
-    {
       title: 'API 地址',
       dataIndex: 'apiUrl',
       key: 'apiUrl',
@@ -184,27 +174,22 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
       width: 170
     },
     {
+      title: 'TTS 模型',
+      dataIndex: 'ttsModel',
+      key: 'ttsModel',
+      width: 170,
+      render: (ttsModel?: string) => ttsModel || '-'
+    },
+    {
       title: '温度',
       dataIndex: 'temperature',
       key: 'temperature',
       width: 64
     },
     {
-      title: '供应商默认',
-      dataIndex: 'isDefault',
-      key: 'isDefault',
-      width: 108,
-      render: (isDefault: number) =>
-        isDefault === 1 ? (
-          <Tag color="gold" icon={<StarFilled />}>
-            默认
-          </Tag>
-        ) : null
-    },
-    {
       title: '操作',
       key: 'action',
-      width: 140,
+      width: 96,
       render: (_: any, record: LLMGlobalConfig) => (
         <Space size="small">
           <Button
@@ -215,16 +200,6 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
           >
             编辑
           </Button>
-          {record.isDefault !== 1 && (
-            <Button
-              type="link"
-              size="small"
-              icon={<StarOutlined />}
-              onClick={() => handleSetDefault(record.id)}
-            >
-              设为该供应商默认
-            </Button>
-          )}
           <Popconfirm
             title="确定要删除此配置吗？"
             onConfirm={() => handleDelete(record.id)}
@@ -252,12 +227,12 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
           type="text"
           icon={<SettingOutlined />}
           onClick={handleOpenModal}
-          title="LLM 配置管理"
+          title="模型配置管理"
         />
       )}
 
       <Modal
-        title="全局 LLM 配置管理"
+        title="全局模型配置管理"
         open={modalVisible}
         onCancel={handleCloseModal}
         footer={null}
@@ -273,7 +248,7 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
             新增配置
           </Button>
           <div className="text-xs text-gray-500 mt-2">
-            默认配置按供应商分别生效，每个供应商会有一条默认配置。
+            每条配置保存一组 API 地址、密钥、LLM 模型和可选 TTS 模型，节点中直接选择使用。
           </div>
         </div>
 
@@ -285,7 +260,7 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
           pagination={false}
           size="small"
           tableLayout="fixed"
-          scroll={{ x: 980 }}
+          scroll={{ x: 900 }}
         />
 
         <Modal
@@ -314,7 +289,7 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
                       : Promise.reject(new Error('请输入或选择提供商'))
                 }
               ]}
-              extra="支持直接手填，也可以从已有供应商中选择。手填时建议与节点类型保持一致，例如 openai、deepseek、qwen、step。"
+              extra="支持直接手填，也可以从已有供应商中选择。TTS 目前使用 qwen 或 step。"
             >
               <AutoComplete
                 placeholder="请输入或选择提供商"
@@ -328,21 +303,12 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
             </Form.Item>
 
             <Form.Item
-              name="configName"
-              label="配置别名"
-              rules={[{ required: true, message: '请输入配置别名' }]}
-              extra="给这套配置起一个方便识别的名字，比如“默认 OpenAI”“便宜模型”“主账号”。"
-            >
-              <Input placeholder="例如: 默认 OpenAI、主账号、便宜模型" />
-            </Form.Item>
-
-            <Form.Item
               name="apiUrl"
               label="API 地址"
               rules={[{ required: true, message: '请输入 API 地址' }]}
-              extra="填写接口根地址，不要追加具体接口路径。"
+              extra="填写接口根地址，不要追加具体接口路径。StepAudio 可填 https://api.stepfun.com/v1，通义 TTS 可填 https://dashscope.aliyuncs.com/api/v1。"
             >
-              <Input placeholder="例如: https://api.openai.com" />
+              <Input placeholder="例如: https://api.openai.com, https://api.stepfun.com/v1" />
             </Form.Item>
 
             <Form.Item
@@ -355,10 +321,18 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
 
             <Form.Item
               name="model"
-              label="默认模型"
+              label="默认 LLM 模型"
               rules={[{ required: true, message: '请输入默认模型' }]}
             >
-              <Input placeholder="例如: gpt-3.5-turbo, deepseek-chat, claude-3-5-sonnet-20241022" />
+              <Input placeholder="例如: gpt-4.1, deepseek-chat, step-3.5-flash-2603" />
+            </Form.Item>
+
+            <Form.Item
+              name="ttsModel"
+              label="默认 TTS 模型"
+              extra="可选。TTS 节点会优先使用这里的模型；为空时按供应商使用默认 TTS 模型。"
+            >
+              <Input placeholder="例如: qwen3-tts-flash, stepaudio-2.5-tts" />
             </Form.Item>
 
             <Form.Item

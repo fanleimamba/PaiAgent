@@ -36,6 +36,26 @@ export interface ApiResult<T> {
   data: T;
 }
 
+export interface ExecutionNodeResult {
+  nodeId: string;
+  nodeName: string;
+  status: 'SUCCESS' | 'FAILED' | 'RUNNING';
+  input?: unknown;
+  output?: unknown;
+  duration?: number;
+  error?: string;
+}
+
+export interface ExecutionResponse {
+  executionId: number;
+  status: 'SUCCESS' | 'FAILED' | 'RUNNING';
+  inputData?: unknown;
+  nodeResults: ExecutionNodeResult[];
+  outputData: unknown;
+  duration: number;
+  errorMessage?: string;
+}
+
 /**
  * 获取所有节点类型
  */
@@ -83,6 +103,13 @@ export const deleteWorkflow = (id: number): Promise<ApiResult<void>> => {
  */
 export const executeWorkflow = (id: number, inputData: string): Promise<ApiResult<any>> => {
   return api.post(`/api/workflows/${id}/execute`, { inputData });
+};
+
+/**
+ * 获取最近一次执行记录
+ */
+export const getLatestExecution = (id: number): Promise<ApiResult<ExecutionResponse | null>> => {
+  return api.get(`/api/workflows/${id}/executions/latest`);
 };
 
 export interface ExecutionEvent {

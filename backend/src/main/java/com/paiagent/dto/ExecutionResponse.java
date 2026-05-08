@@ -11,9 +11,11 @@ public class ExecutionResponse {
     
     private Long executionId;
     private String status;
+    private String inputData;
     private List<NodeResult> nodeResults;
     private String outputData;
     private Integer duration;
+    private String errorMessage;
     
     @Data
     public static class NodeResult {

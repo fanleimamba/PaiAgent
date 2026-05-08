@@ -12,7 +12,7 @@ import java.util.Locale;
 import java.util.List;
 
 /**
- * 全局 LLM 配置服务
+ * 全局模型配置服务，LLM 与 TTS 节点共用。
  */
 @Service
 public class LLMGlobalConfigService extends ServiceImpl<LLMGlobalConfigMapper, LLMGlobalConfig> {
@@ -120,6 +120,7 @@ public class LLMGlobalConfigService extends ServiceImpl<LLMGlobalConfigMapper, L
         config.setApiUrl(trimToNull(config.getApiUrl()));
         config.setApiKey(trimToNull(config.getApiKey()));
         config.setModel(trimToNull(config.getModel()));
+        config.setTtsModel(trimToNull(config.getTtsModel()));
     }
 
     private void validateConfig(LLMGlobalConfig config) {

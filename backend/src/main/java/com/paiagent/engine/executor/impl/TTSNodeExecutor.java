@@ -4,9 +4,14 @@ import com.alibaba.dashscope.aigc.multimodalconversation.AudioParameters;
 import com.alibaba.dashscope.aigc.multimodalconversation.MultiModalConversation;
 import com.alibaba.dashscope.aigc.multimodalconversation.MultiModalConversationParam;
 import com.alibaba.dashscope.aigc.multimodalconversation.MultiModalConversationResult;
+import com.alibaba.dashscope.utils.Constants;
+import com.alibaba.fastjson2.JSON;
+import com.alibaba.fastjson2.JSONObject;
 import com.paiagent.dto.ExecutionEvent;
 import com.paiagent.engine.executor.NodeExecutor;
 import com.paiagent.engine.model.WorkflowNode;
+import com.paiagent.entity.LLMGlobalConfig;
+import com.paiagent.service.LLMGlobalConfigService;
 import com.paiagent.service.MinioService;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -15,8 +20,10 @@ import org.springframework.util.StringUtils;
 
 import java.io.ByteArrayOutputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.nio.charset.StandardCharsets;
 import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Consumer;
@@ -25,10 +32,17 @@ import java.util.function.Consumer;
 @Component
 public class TTSNodeExecutor implements NodeExecutor {
     
-    private static final int MAX_TTS_INPUT_LENGTH = 400;
+    private static final int QWEN_MAX_TTS_INPUT_LENGTH = 400;
+    private static final int QWEN_MAX_TTS_INPUT_BYTES = 600;
+    private static final int STEP_MAX_TTS_INPUT_LENGTH = 1000;
+    private static final int STEP_INSTRUCTION_MAX_LENGTH = 200;
+    private static final Object DASHSCOPE_HTTP_URL_LOCK = new Object();
     
     @Autowired
     private MinioService minioService;
+
+    @Autowired
+    private LLMGlobalConfigService llmGlobalConfigService;
     
     @Override
     public Map<String, Object> execute(WorkflowNode node, Map<String, Object> input) throws Exception {
@@ -43,21 +57,14 @@ public class TTSNodeExecutor implements NodeExecutor {
         }
         
         Map<String, Object> data = node.getData();
-        String apiKey = (String) data.get("apiKey");
-        String model = (String) data.getOrDefault("model", "qwen3-tts-flash");
-        String voiceStr = (String) data.getOrDefault("voice", "Cherry");
-        String languageType = (String) data.getOrDefault("languageType", "Auto");
+        TtsRuntimeConfig config = resolveConfig(data);
         
-        if (!StringUtils.hasText(apiKey)) {
-            throw new IllegalArgumentException("阿里百炼 API Key 不能为空,请在节点配置中设置");
-        }
+        validateConfig(config);
         
-        log.info("TTS 节点执行 - 模型: {}, 文本长度: {}, 音色: {}, 语言类型: {}", 
-                model, text.length(), voiceStr, languageType);
+        log.info("TTS 节点执行 - 供应商: {}, 模型: {}, 文本长度: {}, 音色: {}, 语言类型: {}",
+                config.provider(), config.model(), text.length(), config.voice(), config.languageType());
         
-        AudioParameters.Voice voice = convertVoice(voiceStr);
-        
-        List<String> textChunks = splitText(text, MAX_TTS_INPUT_LENGTH);
+        List<String> textChunks = splitText(text, config.maxInputLength(), config.maxInputBytes());
         log.info("文本分割为 {} 个片段", textChunks.size());
         
         if (progressCallback != null) {
@@ -73,8 +80,6 @@ public class TTSNodeExecutor implements NodeExecutor {
         }
         
         List<byte[]> audioChunks = new ArrayList<>();
-        MultiModalConversation conv = new MultiModalConversation();
-        
         List<CompletableFuture<byte[]>> futures = new ArrayList<>();
         
         for (int i = 0; i < textChunks.size(); i++) {
@@ -100,24 +105,7 @@ public class TTSNodeExecutor implements NodeExecutor {
                         ));
                     }
                     
-                    MultiModalConversationParam param = MultiModalConversationParam.builder()
-                            .apiKey(apiKey)
-                            .model(model)
-                            .text(chunk)
-                            .voice(voice)
-                            .languageType(languageType)
-                            .build();
-                    
-                    MultiModalConversationResult result = conv.call(param);
-                    String audioUrl = result.getOutput().getAudio().getUrl();
-                    
-                    if (!StringUtils.hasText(audioUrl)) {
-                        throw new RuntimeException("阿里百炼 TTS 返回的音频URL为空 (片段 " + (chunkIndex + 1) + ")");
-                    }
-                    
-                    log.info("第 {}/{} 个片段音频URL: {}", chunkIndex + 1, textChunks.size(), audioUrl);
-                    
-                    byte[] audioData = downloadAudio(audioUrl);
+                    byte[] audioData = synthesizeChunk(config, chunk, chunkIndex + 1, textChunks.size());
                     
                     if (progressCallback != null) {
                         Map<String, Object> progressData = new HashMap<>();
@@ -171,6 +159,189 @@ public class TTSNodeExecutor implements NodeExecutor {
         log.info("TTS 合并音频已上传到 MinIO: {}, 共 {} 个片段", minioUrl, textChunks.size());
         
         return output;
+    }
+
+    private TtsRuntimeConfig resolveConfig(Map<String, Object> data) {
+        Long configId = parseLong(data.get("configId"));
+        String provider = null;
+        String apiUrl = null;
+        String apiKey = null;
+        String model = null;
+        boolean explicitTtsModel = false;
+
+        if (configId != null) {
+            LLMGlobalConfig globalConfig = llmGlobalConfigService.getById(configId);
+            if (globalConfig != null) {
+                provider = canonicalizeProvider(globalConfig.getProvider());
+                apiUrl = trimString(globalConfig.getApiUrl());
+                apiKey = trimString(globalConfig.getApiKey());
+                model = trimString(globalConfig.getTtsModel());
+                explicitTtsModel = StringUtils.hasText(model);
+                if (!explicitTtsModel) {
+                    model = trimString(globalConfig.getModel());
+                }
+                log.info("TTS 使用全局配置: {}", globalConfig.getConfigName());
+            } else {
+                log.warn("TTS 全局配置不存在: {}", configId);
+            }
+        }
+
+        if (!StringUtils.hasText(apiKey)) {
+            apiKey = trimString(data.get("apiKey"));
+        }
+        if (!StringUtils.hasText(apiUrl)) {
+            apiUrl = trimString(data.get("apiUrl"));
+        }
+        if (!StringUtils.hasText(model)) {
+            model = trimString(data.get("model"));
+        }
+        if (!StringUtils.hasText(provider)) {
+            provider = canonicalizeProvider(trimString(data.get("provider")));
+        }
+        if (!StringUtils.hasText(provider)) {
+            provider = inferProviderFromModel(model);
+        }
+
+        String voice = trimString(data.get("voice"));
+        if (!StringUtils.hasText(voice)) {
+            voice = "step".equals(provider) ? "cixingnansheng" : "Cherry";
+        }
+
+        String languageType = trimString(data.get("languageType"));
+        if (!StringUtils.hasText(languageType)) {
+            languageType = "Auto";
+        }
+
+        String instruction = trimString(data.get("instruction"));
+        double speed = parseDouble(data.get("speed"), 1.0);
+        double volume = parseDouble(data.get("volume"), 1.0);
+        int sampleRate = parseInt(data.get("sampleRate"), 24000);
+
+        model = normalizeTtsModel(provider, model, explicitTtsModel);
+
+        return new TtsRuntimeConfig(
+                provider,
+                apiUrl,
+                apiKey,
+                model,
+                voice,
+                languageType,
+                instruction,
+                speed,
+                volume,
+                sampleRate
+        );
+    }
+
+    private void validateConfig(TtsRuntimeConfig config) {
+        if (!StringUtils.hasText(config.provider())) {
+            throw new IllegalArgumentException("TTS 节点缺少供应商配置，请选择全局配置或手动选择供应商");
+        }
+        if (!StringUtils.hasText(config.apiKey())) {
+            throw new IllegalArgumentException("TTS API Key 不能为空，请选择全局配置或在节点配置中设置");
+        }
+        if (!StringUtils.hasText(config.model())) {
+            throw new IllegalArgumentException("TTS 模型名称不能为空");
+        }
+        if (!"qwen".equals(config.provider()) && !"step".equals(config.provider())) {
+            throw new IllegalArgumentException("TTS 暂不支持的供应商: " + config.provider());
+        }
+        if ("step".equals(config.provider()) && config.instruction() != null
+                && config.instruction().length() > STEP_INSTRUCTION_MAX_LENGTH) {
+            throw new IllegalArgumentException("StepAudio 2.5 TTS 的 instruction 不能超过 200 字符");
+        }
+    }
+
+    private byte[] synthesizeChunk(TtsRuntimeConfig config, String chunk, int chunkIndex, int totalChunks) throws Exception {
+        return switch (config.provider()) {
+            case "step" -> callStepTts(config, chunk);
+            case "qwen" -> callQwenTts(config, chunk, chunkIndex, totalChunks);
+            default -> throw new IllegalArgumentException("TTS 暂不支持的供应商: " + config.provider());
+        };
+    }
+
+    private byte[] callQwenTts(TtsRuntimeConfig config, String chunk, int chunkIndex, int totalChunks) throws Exception {
+        AudioParameters.Voice voice = convertVoice(config.voice());
+        MultiModalConversationParam param = MultiModalConversationParam.builder()
+                .apiKey(config.apiKey())
+                .model(config.model())
+                .text(chunk)
+                .voice(voice)
+                .languageType(config.languageType())
+                .build();
+
+        MultiModalConversationResult result;
+        synchronized (DASHSCOPE_HTTP_URL_LOCK) {
+            String previousBaseUrl = Constants.baseHttpApiUrl;
+            try {
+                String baseUrl = normalizeDashScopeBaseApiUrl(config.apiUrl());
+                if (StringUtils.hasText(baseUrl)) {
+                    Constants.baseHttpApiUrl = baseUrl;
+                }
+                result = new MultiModalConversation().call(param);
+            } finally {
+                Constants.baseHttpApiUrl = previousBaseUrl;
+            }
+        }
+
+        String audioUrl = result.getOutput().getAudio().getUrl();
+        if (!StringUtils.hasText(audioUrl)) {
+            throw new RuntimeException("阿里百炼 TTS 返回的音频URL为空 (片段 " + chunkIndex + ")");
+        }
+
+        log.info("第 {}/{} 个片段音频URL: {}", chunkIndex, totalChunks, audioUrl);
+        return downloadAudio(audioUrl);
+    }
+
+    private byte[] callStepTts(TtsRuntimeConfig config, String chunk) throws Exception {
+        String endpoint = normalizeStepSpeechEndpoint(config.apiUrl());
+        HttpURLConnection conn = (HttpURLConnection) new URL(endpoint).openConnection();
+        conn.setRequestMethod("POST");
+        conn.setConnectTimeout(30000);
+        conn.setReadTimeout(120000);
+        conn.setDoOutput(true);
+        conn.setRequestProperty("Authorization", "Bearer " + config.apiKey());
+        conn.setRequestProperty("Content-Type", "application/json");
+        conn.setRequestProperty("Accept", "audio/wav,application/json");
+
+        JSONObject body = new JSONObject();
+        body.put("model", config.model());
+        body.put("input", chunk);
+        body.put("voice", config.voice());
+        body.put("response_format", "wav");
+        body.put("speed", config.speed());
+        body.put("volume", config.volume());
+        body.put("sample_rate", config.sampleRate());
+        if (StringUtils.hasText(config.instruction())) {
+            body.put("instruction", config.instruction());
+        }
+
+        try (OutputStream os = conn.getOutputStream()) {
+            os.write(JSON.toJSONString(body).getBytes(StandardCharsets.UTF_8));
+        }
+
+        int status = conn.getResponseCode();
+        try (InputStream is = status >= 200 && status < 300 ? conn.getInputStream() : conn.getErrorStream();
+             ByteArrayOutputStream baos = new ByteArrayOutputStream()) {
+            if (is != null) {
+                byte[] buffer = new byte[8192];
+                int bytesRead;
+                while ((bytesRead = is.read(buffer)) != -1) {
+                    baos.write(buffer, 0, bytesRead);
+                }
+            }
+            byte[] responseBytes = baos.toByteArray();
+            if (status < 200 || status >= 300) {
+                String responseText = new String(responseBytes, StandardCharsets.UTF_8);
+                throw new RuntimeException("StepAudio TTS 调用失败, HTTP " + status + ": " + responseText);
+            }
+            if (responseBytes.length == 0) {
+                throw new RuntimeException("StepAudio TTS 返回的音频为空");
+            }
+            return responseBytes;
+        } finally {
+            conn.disconnect();
+        }
     }
     
     private AudioParameters.Voice convertVoice(String voiceStr) {
@@ -228,7 +399,7 @@ public class TTSNodeExecutor implements NodeExecutor {
         return "tts";
     }
     
-    private List<String> splitText(String text, int maxLength) {
+    private List<String> splitText(String text, int maxLength, int maxBytes) {
         List<String> chunks = new ArrayList<>();
         int start = 0;
         
@@ -237,9 +408,9 @@ public class TTSNodeExecutor implements NodeExecutor {
             
             while (end > start) {
                 String candidate = text.substring(start, end);
-                int byteLength = candidate.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
+                int byteLength = candidate.getBytes(StandardCharsets.UTF_8).length;
                 
-                if (byteLength <= 600) {
+                if (byteLength <= maxBytes) {
                     if (end < text.length()) {
                         int lastPunctuation = findLastPunctuation(text, start, end);
                         if (lastPunctuation > start) {
@@ -260,8 +431,8 @@ public class TTSNodeExecutor implements NodeExecutor {
                 end = start + 1;
                 while (end <= text.length()) {
                     String candidate = text.substring(start, end);
-                    int byteLength = candidate.getBytes(java.nio.charset.StandardCharsets.UTF_8).length;
-                    if (byteLength > 600) {
+                    int byteLength = candidate.getBytes(StandardCharsets.UTF_8).length;
+                    if (byteLength > maxBytes) {
                         if (end - 1 > start) {
                             chunks.add(text.substring(start, end - 1));
                             start = end - 1;
@@ -286,6 +457,132 @@ public class TTSNodeExecutor implements NodeExecutor {
             }
         }
         return -1;
+    }
+
+    private String normalizeDashScopeBaseApiUrl(String apiUrl) {
+        if (!StringUtils.hasText(apiUrl)) {
+            return null;
+        }
+        String normalized = apiUrl.trim();
+        if (normalized.endsWith("/")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+        normalized = normalized
+                .replace("/services/aigc/multimodal-generation/generation", "")
+                .replace("/compatible-mode/v1", "/api/v1")
+                .replace("/compatible-mode", "/api/v1");
+        if (!normalized.endsWith("/api/v1")) {
+            normalized = normalized + "/api/v1";
+        }
+        return normalized;
+    }
+
+    private String normalizeStepSpeechEndpoint(String apiUrl) {
+        String normalized = StringUtils.hasText(apiUrl) ? apiUrl.trim() : "https://api.stepfun.com/v1";
+        if (normalized.endsWith("/")) {
+            normalized = normalized.substring(0, normalized.length() - 1);
+        }
+        if (normalized.endsWith("/audio/speech")) {
+            return normalized;
+        }
+        if (normalized.endsWith("/v1")) {
+            return normalized + "/audio/speech";
+        }
+        if (normalized.endsWith("/step_plan/v1")) {
+            return normalized + "/audio/speech";
+        }
+        return normalized + "/v1/audio/speech";
+    }
+
+    private String canonicalizeProvider(String provider) {
+        if (!StringUtils.hasText(provider)) {
+            return null;
+        }
+        return switch (provider.trim().toLowerCase(Locale.ROOT)) {
+            case "stepfun", "阶跃星辰" -> "step";
+            case "通义千问", "dashscope", "aliyun" -> "qwen";
+            default -> provider.trim().toLowerCase(Locale.ROOT);
+        };
+    }
+
+    private String inferProviderFromModel(String model) {
+        if (!StringUtils.hasText(model)) {
+            return "qwen";
+        }
+        String normalized = model.trim().toLowerCase(Locale.ROOT);
+        if (normalized.startsWith("step") || normalized.contains("stepaudio")) {
+            return "step";
+        }
+        return "qwen";
+    }
+
+    private String normalizeTtsModel(String provider, String model, boolean explicitTtsModel) {
+        String normalizedProvider = canonicalizeProvider(provider);
+        String trimmedModel = trimString(model);
+        if (explicitTtsModel) {
+            return trimmedModel;
+        }
+        String lowerModel = trimmedModel == null ? "" : trimmedModel.toLowerCase(Locale.ROOT);
+
+        if ("step".equals(normalizedProvider)) {
+            if (lowerModel.contains("step") && lowerModel.contains("tts")) {
+                return trimmedModel;
+            }
+            if (StringUtils.hasText(trimmedModel)) {
+                log.warn("StepAudio TTS 收到非 TTS 模型配置: {}, 已切换为 stepaudio-2.5-tts", trimmedModel);
+            }
+            return "stepaudio-2.5-tts";
+        }
+
+        if ("qwen".equals(normalizedProvider)) {
+            if (lowerModel.contains("tts")) {
+                return trimmedModel;
+            }
+            if (StringUtils.hasText(trimmedModel)) {
+                log.warn("Qwen TTS 收到非 TTS 模型配置: {}, 已切换为 qwen3-tts-flash", trimmedModel);
+            }
+            return "qwen3-tts-flash";
+        }
+
+        return trimmedModel;
+    }
+
+    private Long parseLong(Object value) {
+        if (value instanceof Number number) {
+            return number.longValue();
+        }
+        if (value instanceof String string && StringUtils.hasText(string)) {
+            return Long.parseLong(string);
+        }
+        return null;
+    }
+
+    private double parseDouble(Object value, double defaultValue) {
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+        if (value instanceof String string && StringUtils.hasText(string)) {
+            return Double.parseDouble(string);
+        }
+        return defaultValue;
+    }
+
+    private int parseInt(Object value, int defaultValue) {
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        if (value instanceof String string && StringUtils.hasText(string)) {
+            return Integer.parseInt(string);
+        }
+        return defaultValue;
+    }
+
+    private String trimString(Object value) {
+        if (value == null) {
+            return null;
+        }
+        String string = String.valueOf(value).trim();
+        return string.isEmpty() ? null : string;
     }
     
     private byte[] downloadAudio(String audioUrl) throws Exception {
@@ -349,5 +646,26 @@ public class TTSNodeExecutor implements NodeExecutor {
         mergedData[43] = (byte) ((dataSize >> 24) & 0xFF);
         
         return mergedData;
+    }
+
+    private record TtsRuntimeConfig(
+            String provider,
+            String apiUrl,
+            String apiKey,
+            String model,
+            String voice,
+            String languageType,
+            String instruction,
+            double speed,
+            double volume,
+            int sampleRate
+    ) {
+        int maxInputLength() {
+            return "step".equals(provider) ? STEP_MAX_TTS_INPUT_LENGTH : QWEN_MAX_TTS_INPUT_LENGTH;
+        }
+
+        int maxInputBytes() {
+            return "step".equals(provider) ? Integer.MAX_VALUE : QWEN_MAX_TTS_INPUT_BYTES;
+        }
     }
 }

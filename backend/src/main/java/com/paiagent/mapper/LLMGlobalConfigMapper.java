@@ -8,7 +8,7 @@ import org.apache.ibatis.annotations.Param;
 import org.apache.ibatis.annotations.Select;
 
 /**
- * 全局 LLM 配置 Mapper 接口
+ * 全局模型配置 Mapper 接口。
  */
 @Mapper
 public interface LLMGlobalConfigMapper extends BaseMapper<LLMGlobalConfig> {

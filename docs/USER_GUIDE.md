@@ -141,12 +141,13 @@ npm run dev
 
 | 节点 | 说明 | 配置参数 |
 |------|------|----------|
-| TTS | 文本转语音 | API Key, 音色, 语速, 音量, 提供商 |
+| TTS | 文本转语音 | 全局配置, 提供商, 模型, 音色, 语境参数 |
 
 **TTS 提供商**:
-- `simulation`: 模拟模式 (默认)
-- `azure`: Azure Cognitive Services (开发中)
-- `aliyun`: 阿里云语音合成 (开发中)
+- `qwen`: 阿里百炼 Qwen3 TTS, 默认模型 `qwen3-tts-flash`
+- `step`: 阶跃星辰 StepAudio, 默认模型 `stepaudio-2.5-tts`
+
+TTS 节点优先使用“全局模型配置”中的 API 地址、API Key 和模型名称；未选择全局配置时，也可以在节点内手动填写。
 
 ## 常见问题
 

@@ -90,16 +90,17 @@ INSERT INTO node_definition (node_type, display_name, category, icon, input_sche
 ('tts', '超拟人音频合成', 'TOOL', '🔊',
  '{"type": "object", "properties": {"text": {"type": "string"}}}',
  '{"type": "object", "properties": {"audioUrl": {"type": "string"}, "duration": {"type": "number"}, "fileSize": {"type": "number"}}}',
- '{"type": "object", "properties": {"apiKey": {"type": "string"}, "voice": {"type": "string", "default": "female"}, "speed": {"type": "number", "default": 1.0}, "volume": {"type": "number", "default": 80}}}');
+ '{"type": "object", "properties": {"provider": {"type": "string"}, "configId": {"type": "number"}, "apiUrl": {"type": "string"}, "apiKey": {"type": "string"}, "model": {"type": "string", "default": "qwen3-tts-flash"}, "voice": {"type": "string", "default": "Cherry"}, "languageType": {"type": "string", "default": "Auto"}, "instruction": {"type": "string"}, "speed": {"type": "number", "default": 1.0}, "volume": {"type": "number", "default": 1.0}, "sampleRate": {"type": "number", "default": 24000}}}');
 
--- 全局 LLM 配置表
+-- 全局模型配置表（LLM 与 TTS 共用）
 CREATE TABLE IF NOT EXISTS llm_global_config (
     id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '配置主键 ID',
-    provider VARCHAR(50) NOT NULL COMMENT '提供商: openai/deepseek/qwen/step',
+    provider VARCHAR(50) NOT NULL COMMENT '提供商: openai/deepseek/qwen/step/zhipu/ai_ping',
     config_name VARCHAR(100) NOT NULL COMMENT '配置名称',
     api_url VARCHAR(255) NOT NULL COMMENT 'API地址',
     api_key TEXT NOT NULL COMMENT 'API密钥',
-    model VARCHAR(100) NOT NULL COMMENT '默认模型',
+    model VARCHAR(100) NOT NULL COMMENT '默认LLM模型',
+    tts_model VARCHAR(100) DEFAULT NULL COMMENT '默认TTS模型',
     temperature DECIMAL(3,2) DEFAULT 0.7 COMMENT '默认温度',
     is_default TINYINT DEFAULT 0 COMMENT '是否默认配置(0-否,1-是)',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -108,4 +109,4 @@ CREATE TABLE IF NOT EXISTS llm_global_config (
     UNIQUE KEY uk_provider_config_name (provider, config_name),
     INDEX idx_provider (provider),
     INDEX idx_is_default (is_default)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='全局LLM配置表';
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='全局模型配置表';

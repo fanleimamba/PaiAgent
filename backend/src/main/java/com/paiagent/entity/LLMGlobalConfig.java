@@ -6,7 +6,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
- * 全局 LLM 配置实体类
+ * 全局模型配置实体类，LLM 与 TTS 节点共用。
  */
 @Data
 @TableName("llm_global_config")
@@ -19,7 +19,7 @@ public class LLMGlobalConfig {
     private Long id;
 
     /**
-     * 提供商: openai/deepseek/qwen
+     * 提供商: openai/deepseek/qwen/step/zhipu/ai_ping
      */
     private String provider;
 
@@ -39,9 +39,14 @@ public class LLMGlobalConfig {
     private String apiKey;
 
     /**
-     * 默认模型
+     * 默认 LLM 模型
      */
     private String model;
+
+    /**
+     * 默认 TTS 模型
+     */
+    private String ttsModel;
 
     /**
      * 默认温度

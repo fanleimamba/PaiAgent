@@ -1,11 +1,17 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Drawer, Input, Button, Progress, Tag, Collapse, Alert } from 'antd';
 import { PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined } from '@ant-design/icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import AudioPlayer from './AudioPlayer';
 import { buildBackendUrl } from '../config/api';
-import { ExecutionEvent, executeWorkflowStream } from '../api/workflow';
+import {
+  ExecutionEvent,
+  ExecutionNodeResult,
+  ExecutionResponse as PersistedExecutionResponse,
+  executeWorkflowStream,
+  getLatestExecution,
+} from '../api/workflow';
 import { useWorkflowStore } from '../store/workflowStore';
 
 const { TextArea } = Input;
@@ -47,6 +53,10 @@ const parseJsonIfPossible = (value: string) => {
   }
 };
 
+const normalizeValue = (value: unknown): unknown => (
+  typeof value === 'string' ? parseJsonIfPossible(value) : value
+);
+
 const getFriendlyOutputText = (value: unknown): string | null => {
   const normalizedValue = typeof value === 'string' ? parseJsonIfPossible(value) : value;
 
@@ -59,6 +69,34 @@ const getFriendlyOutputText = (value: unknown): string | null => {
   }
 
   return null;
+};
+
+const formatDuration = (milliseconds: number | string | undefined | null) => {
+  const ms = typeof milliseconds === 'string'
+    ? Number.parseInt(milliseconds, 10)
+    : milliseconds;
+
+  if (!Number.isFinite(ms) || !ms || ms <= 0) {
+    return '0秒';
+  }
+
+  const totalSeconds = ms / 1000;
+  const minutes = Math.floor(totalSeconds / 60);
+  let seconds = totalSeconds - minutes * 60;
+
+  if (minutes > 0) {
+    seconds = Math.round(seconds);
+    if (seconds === 60) {
+      return `${minutes + 1}分0秒`;
+    }
+    return `${minutes}分${seconds}秒`;
+  }
+
+  if (totalSeconds < 10) {
+    return `${Number(totalSeconds.toFixed(1))}秒`;
+  }
+
+  return `${Math.round(totalSeconds)}秒`;
 };
 
 const DebugValue = ({ value, preferOutputText = false }: { value: unknown; preferOutputText?: boolean }) => {
@@ -93,6 +131,88 @@ const DebugDrawer = ({ open, onClose }: DebugDrawerProps) => {
     const timestamp = new Date().toLocaleTimeString();
     setLogs((prev) => [...prev, `[${timestamp}] ${message}`]);
   };
+
+  const normalizeNodeResult = (nodeResult: ExecutionNodeResult): NodeResult => {
+    const input = normalizeValue(nodeResult.input);
+    const output = normalizeValue(nodeResult.output);
+
+    return {
+      nodeId: nodeResult.nodeId,
+      nodeName: nodeResult.nodeName,
+      status: nodeResult.status,
+      input: isRecord(input) ? input : {},
+      output: isRecord(output) ? output : {},
+      duration: nodeResult.duration || 0,
+      error: nodeResult.error,
+    };
+  };
+
+  const extractInputText = (inputData: unknown) => {
+    const normalizedInput = normalizeValue(inputData);
+    if (typeof normalizedInput === 'string') {
+      return normalizedInput;
+    }
+    if (isRecord(normalizedInput) && typeof normalizedInput.input === 'string') {
+      return normalizedInput.input;
+    }
+    return '';
+  };
+
+  const restoreExecution = (result: PersistedExecutionResponse) => {
+    const restoredNodeResults = (result.nodeResults || []).map(normalizeNodeResult);
+    const restoredResult: ExecutionResponse = {
+      executionId: result.executionId,
+      status: result.status,
+      nodeResults: restoredNodeResults,
+      outputData: normalizeValue(result.outputData),
+      duration: result.duration || 0,
+      errorMessage: result.errorMessage,
+    };
+
+    setInputData(extractInputText(result.inputData));
+    setExecutionResult(restoredResult);
+    setNodeStatusMap(new Map(restoredNodeResults.map((node) => [node.nodeId, node])));
+
+    const restoredLogs = [
+      `已加载最近一次执行记录 #${result.executionId}`,
+      ...restoredNodeResults.map((node) => {
+        if (node.status === 'FAILED') {
+          return `❌ 节点 [${node.nodeName}] 执行失败${node.error ? `: ${node.error}` : ''}`;
+        }
+        return `✅ 节点 [${node.nodeName}] 执行成功,耗时 ${formatDuration(node.duration)}`;
+      }),
+      `${result.status === 'SUCCESS' ? '✅' : '❌'} 工作流执行${result.status === 'SUCCESS' ? '成功' : '失败'},总耗时 ${formatDuration(result.duration)}`,
+    ];
+
+    setLogs(restoredLogs.map((message) => `[历史] ${message}`));
+  };
+
+  const loadLatestExecution = async () => {
+    if (!currentWorkflowId || executing) {
+      return;
+    }
+
+    try {
+      const result = await getLatestExecution(currentWorkflowId);
+      if (result.code === 200 && result.data) {
+        restoreExecution(result.data);
+      } else if (result.code === 200) {
+        setExecutionResult(null);
+        setLogs([]);
+        setNodeStatusMap(new Map());
+      }
+    } catch (error) {
+      console.warn('加载最近一次执行记录失败:', error);
+    }
+  };
+
+  useEffect(() => {
+    if (!open || executing) {
+      return;
+    }
+
+    loadLatestExecution();
+  }, [open, currentWorkflowId]);
 
   const handleExecute = async () => {
     if (!inputData.trim()) {
@@ -145,7 +265,7 @@ const DebugDrawer = ({ open, onClose }: DebugDrawerProps) => {
             case 'NODE_SUCCESS':
               if (event.nodeId && event.nodeName) {
                 const duration = event.message?.match(/耗时 (\d+)ms/)?.[1] || '0';
-                addLog(`✅ 节点 [${event.nodeName}] 执行成功,耗时 ${duration}ms`);
+                addLog(`✅ 节点 [${event.nodeName}] 执行成功,耗时 ${formatDuration(duration)}`);
                 
                 const eventData = isRecord(event.data) ? event.data : {};
                 const nodeResult: NodeResult = {
@@ -193,7 +313,7 @@ const DebugDrawer = ({ open, onClose }: DebugDrawerProps) => {
               
             case 'WORKFLOW_COMPLETE': {
               const totalDuration = event.message?.match(/总耗时 (\d+)ms/)?.[1] || '0';
-              addLog(`${event.status === 'SUCCESS' ? '✅' : '❌'} 工作流执行${event.status === 'SUCCESS' ? '成功' : '失败'},总耗时 ${totalDuration}ms`);
+              addLog(`${event.status === 'SUCCESS' ? '✅' : '❌'} 工作流执行${event.status === 'SUCCESS' ? '成功' : '失败'},总耗时 ${formatDuration(totalDuration)}`);
               
               setExecutionResult({
                 executionId: 0,
@@ -209,6 +329,9 @@ const DebugDrawer = ({ open, onClose }: DebugDrawerProps) => {
         },
         () => {
           setExecuting(false);
+          window.setTimeout(() => {
+            loadLatestExecution();
+          }, 600);
         },
         (error: Error) => {
           const errorMsg = error.message.includes('连接失败') 
@@ -259,7 +382,7 @@ const DebugDrawer = ({ open, onClose }: DebugDrawerProps) => {
           <span className="debug-node-name">
             {statusIcon} {nodeResult.nodeName}
           </span>
-          <Tag color={statusColor}>{nodeResult.duration}ms</Tag>
+          <Tag color={statusColor}>{formatDuration(nodeResult.duration)}</Tag>
         </div>
       ),
       children: (
@@ -329,7 +452,7 @@ const DebugDrawer = ({ open, onClose }: DebugDrawerProps) => {
                 <div className="debug-section-kicker">Run status</div>
                 <h3>执行状态</h3>
               </div>
-              {executionResult && <span className="debug-duration">{executionResult.duration}ms</span>}
+              {executionResult && <span className="debug-duration">{formatDuration(executionResult.duration)}</span>}
             </div>
             <div className="debug-status-card">
               {executing && !executionResult && (

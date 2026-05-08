@@ -100,10 +100,17 @@ const EditorPage = () => {
 
   // TTS 节点配置状态
   const [ttsConfig, setTtsConfig] = useState({
+    provider: '',
+    configId: undefined as number | undefined,
+    apiUrl: '',
     apiKey: '',
-    model: 'qwen3-tts-flash',
-    voice: 'Cherry',
-    languageType: 'Auto'
+    model: '',
+    voice: '',
+    languageType: 'Auto',
+    instruction: '',
+    speed: 1,
+    volume: 1,
+    sampleRate: 24000
   });
   const [ttsInputParams, setTtsInputParams] = useState<TtsInputParam[]>([]);
   const [ttsOutputParams, setTtsOutputParams] = useState<TtsOutputParam[]>([]);
@@ -173,11 +180,27 @@ const EditorPage = () => {
       setLlmOutputParams((node.data?.outputParams as LlmOutputParam[]) || []);
     } else if (node.data?.type === 'tts') {
       // 加载 TTS 节点配置
+      const configId = (node.data?.configId as number) || undefined;
+      const matchedGlobalConfig = configId
+        ? llmGlobalConfigs.find(c => c.id === configId)
+        : undefined;
+      const provider = normalizeProviderKey(
+        matchedGlobalConfig?.provider ||
+        String(node.data?.provider || '') ||
+        (String(node.data?.model || '').toLowerCase().includes('step') ? 'step' : '')
+      );
       setTtsConfig({
-        apiKey: (node.data?.apiKey as string) || '',
-        model: (node.data?.model as string) || 'qwen3-tts-flash',
-        voice: (node.data?.voice as string) || 'Cherry',
-        languageType: (node.data?.languageType as string) || 'Auto'
+        provider,
+        configId,
+        apiUrl: matchedGlobalConfig?.apiUrl || (node.data?.apiUrl as string) || '',
+        apiKey: configId ? '' : (node.data?.apiKey as string) || '',
+        model: getTtsModelForProvider(provider, matchedGlobalConfig?.ttsModel, matchedGlobalConfig?.model || (node.data?.model as string)),
+        voice: (node.data?.voice as string) || (provider === 'step' ? 'cixingnansheng' : provider === 'qwen' ? 'Cherry' : ''),
+        languageType: (node.data?.languageType as string) || 'Auto',
+        instruction: (node.data?.instruction as string) || '',
+        speed: (node.data?.speed as number) || 1,
+        volume: (node.data?.volume as number) || 1,
+        sampleRate: (node.data?.sampleRate as number) || 24000
       });
       setTtsInputParams((node.data?.inputParams as TtsInputParam[]) || []);
       setTtsOutputParams((node.data?.outputParams as TtsOutputParam[]) || []);
@@ -216,6 +239,32 @@ const EditorPage = () => {
       }));
     }
   }, [llmGlobalConfigs, selectedNode, llmConfig]);
+
+  // 当全局配置异步加载完成后，补齐当前选中 TTS 节点的展示配置
+  useEffect(() => {
+    if (!selectedNode || selectedNode.data?.type !== 'tts') return;
+    if (!ttsConfig.configId) return;
+
+    const config = llmGlobalConfigs.find(c => c.id === ttsConfig.configId);
+    if (!config) return;
+    const provider = normalizeProviderKey(config.provider);
+    const model = getTtsModelForProvider(provider, config.ttsModel, config.model);
+
+    const needsSync =
+      ttsConfig.apiUrl !== config.apiUrl ||
+      ttsConfig.model !== model ||
+      ttsConfig.apiKey !== '';
+
+    if (needsSync) {
+      setTtsConfig(prev => ({
+        ...prev,
+        provider,
+        apiUrl: config.apiUrl,
+        apiKey: '',
+        model
+      }));
+    }
+  }, [llmGlobalConfigs, selectedNode, ttsConfig]);
 
   // 加载指定工作流
   const loadWorkflowById = useCallback(async (workflowId: number) => {
@@ -623,12 +672,27 @@ const EditorPage = () => {
   const handleSaveTtsConfig = () => {
     if (!selectedNode) return;
 
-    if (!ttsConfig.apiKey) {
-      message.warning('请填写 API Key');
-      return;
+    if (!ttsConfig.configId) {
+      if (!ttsConfig.provider) {
+        message.warning('请选择供应商');
+        return;
+      }
+      if (!ttsConfig.apiUrl) {
+        message.warning('请选择全局配置或填写 API 地址');
+        return;
+      }
+      if (!ttsConfig.apiKey) {
+        message.warning('请选择全局配置或填写 API Key');
+        return;
+      }
+      if (!ttsConfig.model) {
+        message.warning('请选择全局配置或填写模型名称');
+        return;
+      }
     }
-    if (!ttsConfig.model) {
-      message.warning('请填写模型名称');
+
+    if (normalizeProviderKey(ttsConfig.provider) === 'step' && ttsConfig.instruction.length > 200) {
+      message.warning('StepAudio 2.5 TTS 的 instruction 不能超过 200 字符');
       return;
     }
 
@@ -656,12 +720,20 @@ const EditorPage = () => {
       }
     }
 
+    const useGlobalConfig = !!ttsConfig.configId;
     const updatedData = {
       ...selectedNode.data,
-      apiKey: ttsConfig.apiKey,
-      model: ttsConfig.model,
+      provider: ttsConfig.provider,
+      configId: ttsConfig.configId,
+      apiUrl: useGlobalConfig ? '' : ttsConfig.apiUrl,
+      apiKey: useGlobalConfig ? '' : ttsConfig.apiKey,
+      model: useGlobalConfig ? '' : ttsConfig.model,
       voice: ttsConfig.voice,
       languageType: ttsConfig.languageType,
+      instruction: ttsConfig.instruction,
+      speed: ttsConfig.speed,
+      volume: ttsConfig.volume,
+      sampleRate: ttsConfig.sampleRate,
       inputParams: ttsInputParams,
       outputParams: ttsOutputParams
     };
@@ -825,17 +897,25 @@ const EditorPage = () => {
     // 设置新的定时器（防抖500ms）
     autoSaveTimerRef.current = setTimeout(() => {
       // 基础验证：至少有基本配置
-      const hasBasicConfig = ttsConfig.apiKey || ttsConfig.model;
+      const hasBasicConfig = ttsConfig.configId || ttsConfig.apiUrl || ttsConfig.apiKey || ttsConfig.model;
       const hasParams = ttsInputParams.length > 0 || ttsOutputParams.length > 0;
       
       if (!hasBasicConfig && !hasParams) return; // 没有任何配置，不保存
       
+      const useGlobalConfig = !!ttsConfig.configId;
       const updatedData = {
         ...selectedNode.data,
-        apiKey: ttsConfig.apiKey,
-        model: ttsConfig.model,
+        provider: ttsConfig.provider,
+        configId: ttsConfig.configId,
+        apiUrl: useGlobalConfig ? '' : ttsConfig.apiUrl,
+        apiKey: useGlobalConfig ? '' : ttsConfig.apiKey,
+        model: useGlobalConfig ? '' : ttsConfig.model,
         voice: ttsConfig.voice,
         languageType: ttsConfig.languageType,
+        instruction: ttsConfig.instruction,
+        speed: ttsConfig.speed,
+        volume: ttsConfig.volume,
+        sampleRate: ttsConfig.sampleRate,
         inputParams: ttsInputParams,
         outputParams: ttsOutputParams
       };
@@ -861,6 +941,45 @@ const EditorPage = () => {
     : llmGlobalConfigs.filter(
         (config) => normalizeProviderKey(config.provider) === selectedNodeProvider
       );
+  const ttsProviderOptions = providerOptions.filter(option => ['qwen', 'step'].includes(option.value));
+  const normalizedTtsProvider = normalizeProviderKey(ttsConfig.provider);
+  const availableTtsConfigs = llmGlobalConfigs.filter(
+    (config) => ['qwen', 'step'].includes(normalizeProviderKey(config.provider))
+  );
+  const isStepTtsProvider = normalizedTtsProvider === 'step';
+  const hasTtsProvider = ['qwen', 'step'].includes(normalizedTtsProvider);
+  const getDefaultTtsModel = (provider: string) => provider === 'step' ? 'stepaudio-2.5-tts' : provider === 'qwen' ? 'qwen3-tts-flash' : '';
+  const getDefaultTtsVoice = (provider: string) => provider === 'step' ? 'cixingnansheng' : provider === 'qwen' ? 'Cherry' : '';
+  const getTtsModelForProvider = (provider: string, ttsModel?: string | null, fallbackModel?: string | null) => {
+    const normalizedProvider = normalizeProviderKey(provider);
+    const explicitTtsModel = ttsModel?.trim() || '';
+    if (explicitTtsModel) {
+      return explicitTtsModel;
+    }
+
+    const trimmedModel = fallbackModel?.trim() || '';
+    const lowerModel = trimmedModel.toLowerCase();
+
+    if (normalizedProvider === 'step') {
+      return lowerModel.includes('step') && lowerModel.includes('tts')
+        ? trimmedModel
+        : getDefaultTtsModel(normalizedProvider);
+    }
+
+    if (normalizedProvider === 'qwen') {
+      return lowerModel.includes('tts')
+        ? trimmedModel
+        : getDefaultTtsModel(normalizedProvider);
+    }
+
+    return trimmedModel;
+  };
+  const getGlobalConfigLabel = (config: { provider: string; model?: string; ttsModel?: string }) => {
+    const providerLabel = getProviderLabel(config.provider);
+    const modelLabel = config.model ? `LLM: ${config.model}` : '';
+    const ttsModelLabel = config.ttsModel ? `TTS: ${config.ttsModel}` : '';
+    return [providerLabel, modelLabel, ttsModelLabel].filter(Boolean).join(' / ');
+  };
   const selectedNodeLabel = String(selectedNode?.data?.label || selectedNode?.id || '');
 
   return (
@@ -1269,8 +1388,7 @@ const EditorPage = () => {
                       >
                         {availableLlmConfigs.map(config => (
                             <Select.Option key={config.id} value={config.id}>
-                              {isGenericLlmNode ? `${getProviderLabel(config.provider)} / ` : ''}
-                              {config.configName} {config.isDefault === 1 ? '(该供应商默认)' : ''}
+                              {isGenericLlmNode ? getGlobalConfigLabel(config) : config.model}
                             </Select.Option>
                           ))}
                       </Select>
@@ -1433,60 +1551,230 @@ const EditorPage = () => {
                           暂无输入参数,点击"添加"按钮创建 text 参数
                         </div>
                       )}
-                      
-                      {/* 固定配置项 */}
-                      <div className="mt-4 space-y-3">
-                        <Form.Item label="音色 (voice)" className="mb-0">
-                          <Select
-                            value={ttsConfig.voice}
-                            onChange={(value) => setTtsConfig({ ...ttsConfig, voice: value })}
-                          >
-                            <Select.Option value="Cherry">Cherry (芊悦)</Select.Option>
-                            <Select.Option value="Serena">Serena (苏瑶)</Select.Option>
-                            <Select.Option value="Ethan">Ethan (晨煦)</Select.Option>
-                            <Select.Option value="Chelsie">Chelsie (千雪)</Select.Option>
-                            <Select.Option value="Momo">Momo (茉兔)</Select.Option>
-                            <Select.Option value="Vivian">Vivian (十三)</Select.Option>
-                            <Select.Option value="Moon">Moon (月白)</Select.Option>
-                            <Select.Option value="Maia">Maia (四月)</Select.Option>
-                            <Select.Option value="Kai">Kai (凯)</Select.Option>
-                            <Select.Option value="Nofish">Nofish (不吃鱼)</Select.Option>
-                            <Select.Option value="Bella">Bella (萌宝)</Select.Option>
-                            <Select.Option value="Jennifer">Jennifer (詹妮弗)</Select.Option>
-                            <Select.Option value="Ryan">Ryan (甜茶)</Select.Option>
-                            <Select.Option value="Katerina">Katerina (卡捷琳娜)</Select.Option>
-                            <Select.Option value="Aiden">Aiden (艾登)</Select.Option>
-                          </Select>
-                        </Form.Item>
+                    </div>
 
-                        <Form.Item label="语言类型 (language_type)" className="mb-0">
-                          <Select
-                            value={ttsConfig.languageType}
-                            onChange={(value) => setTtsConfig({ ...ttsConfig, languageType: value })}
-                          >
-                            <Select.Option value="Auto">Auto</Select.Option>
-                          </Select>
-                        </Form.Item>
-                      </div>
+                    {/* 基本信息 */}
+                    <div className="workflow-config-section">
+                      <label className="workflow-config-section-title">基本信息</label>
+                      <Form.Item label="全局配置" required={!ttsConfig.configId && !ttsConfig.apiUrl}>
+                        <Select
+                          value={ttsConfig.configId}
+                          placeholder="选择一个通义千问或阶跃星辰配置"
+                          allowClear
+                          onChange={(value) => {
+                            if (value) {
+                              const config = llmGlobalConfigs.find(c => c.id === value);
+                              if (config) {
+                                const provider = normalizeProviderKey(config.provider);
+                                const providerChanged = provider !== normalizedTtsProvider;
+                                setTtsConfig({
+                                  ...ttsConfig,
+                                  provider,
+                                  configId: value,
+                                  apiUrl: config.apiUrl,
+                                  apiKey: '',
+                                  model: getTtsModelForProvider(provider, config.ttsModel, config.model),
+                                  voice: providerChanged ? getDefaultTtsVoice(provider) : ttsConfig.voice
+                                });
+                              }
+                            } else {
+                              setTtsConfig({
+                                ...ttsConfig,
+                                configId: undefined,
+                                apiUrl: '',
+                                apiKey: '',
+                                model: getDefaultTtsModel(normalizedTtsProvider)
+                              });
+                            }
+                          }}
+                        >
+                          {availableTtsConfigs.map(config => (
+                            <Select.Option key={config.id} value={config.id}>
+                              {getGlobalConfigLabel(config)}
+                            </Select.Option>
+                          ))}
+                        </Select>
+                        <div className="workflow-field-hint">
+                          选择全局配置后无需在节点中保存 API Key。
+                        </div>
+                      </Form.Item>
+
+                      {!ttsConfig.configId && (
+                        <>
+                          <Form.Item label="供应商" required>
+                            <Select
+                              value={ttsConfig.provider}
+                              options={ttsProviderOptions}
+                              onChange={(value) => setTtsConfig({
+                                ...ttsConfig,
+                                provider: value,
+                                model: getDefaultTtsModel(value),
+                                voice: getDefaultTtsVoice(value)
+                              })}
+                            />
+                          </Form.Item>
+                          <div className="workflow-config-warning">
+                            ⚠️ 未选择全局配置，请手动填写以下 API 信息
+                          </div>
+                          <Form.Item label="API 地址" required>
+                            <Input
+                              placeholder={isStepTtsProvider ? 'https://api.stepfun.com/v1' : 'https://dashscope.aliyuncs.com/api/v1'}
+                              value={ttsConfig.apiUrl}
+                              onChange={(e) => setTtsConfig({ ...ttsConfig, apiUrl: e.target.value })}
+                            />
+                          </Form.Item>
+                          <Form.Item label="API Key" required>
+                            <Input.Password
+                              placeholder={isStepTtsProvider ? '请输入 StepFun API Key' : '请输入阿里百炼 API Key'}
+                              value={ttsConfig.apiKey}
+                              onChange={(e) => setTtsConfig({ ...ttsConfig, apiKey: e.target.value })}
+                            />
+                          </Form.Item>
+                          <Form.Item label="模型名称" required>
+                            <Input
+                              placeholder={isStepTtsProvider ? 'stepaudio-2.5-tts' : 'qwen3-tts-flash'}
+                              value={ttsConfig.model}
+                              onChange={(e) => setTtsConfig({ ...ttsConfig, model: e.target.value })}
+                            />
+                          </Form.Item>
+                        </>
+                      )}
+
+                      {ttsConfig.configId && (
+                        <div className="workflow-config-summary">
+                          <div className="font-medium mb-2">当前使用全局配置：</div>
+                          <div>供应商: {getProviderLabel(ttsConfig.provider)}</div>
+                          <div>API 地址: {ttsConfig.apiUrl}</div>
+                          <div>模型: {ttsConfig.model}</div>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* 语音参数 */}
+                    <div className="workflow-config-section">
+                      <label className="workflow-config-section-title">语音参数</label>
+                      {!hasTtsProvider ? (
+                        <div className="workflow-config-empty">
+                          请先选择全局配置或手动选择供应商。
+                        </div>
+                      ) : (
+                        <div className="space-y-3">
+                          <Form.Item label="音色 (voice)" className="mb-0">
+                            {isStepTtsProvider ? (
+                              <Input
+                                placeholder="例如: cixingnansheng"
+                                value={ttsConfig.voice}
+                                onChange={(e) => setTtsConfig({ ...ttsConfig, voice: e.target.value })}
+                              />
+                            ) : (
+                              <Select
+                                showSearch
+                                value={ttsConfig.voice || undefined}
+                                onChange={(value) => setTtsConfig({ ...ttsConfig, voice: value })}
+                              >
+                                <Select.Option value="Cherry">Cherry (芊悦)</Select.Option>
+                                <Select.Option value="Serena">Serena (苏瑶)</Select.Option>
+                                <Select.Option value="Ethan">Ethan (晨煦)</Select.Option>
+                                <Select.Option value="Chelsie">Chelsie (千雪)</Select.Option>
+                                <Select.Option value="Momo">Momo (茉兔)</Select.Option>
+                                <Select.Option value="Vivian">Vivian (十三)</Select.Option>
+                                <Select.Option value="Moon">Moon (月白)</Select.Option>
+                                <Select.Option value="Maia">Maia (四月)</Select.Option>
+                                <Select.Option value="Kai">Kai (凯)</Select.Option>
+                                <Select.Option value="Nofish">Nofish (不吃鱼)</Select.Option>
+                                <Select.Option value="Bella">Bella (萌宝)</Select.Option>
+                                <Select.Option value="Jennifer">Jennifer (詹妮弗)</Select.Option>
+                                <Select.Option value="Ryan">Ryan (甜茶)</Select.Option>
+                                <Select.Option value="Katerina">Katerina (卡捷琳娜)</Select.Option>
+                                <Select.Option value="Aiden">Aiden (艾登)</Select.Option>
+                              </Select>
+                            )}
+                          </Form.Item>
+
+                          {!isStepTtsProvider && (
+                            <Form.Item label="语言类型 (language_type)" className="mb-0">
+                              <Select
+                                value={ttsConfig.languageType}
+                                onChange={(value) => setTtsConfig({ ...ttsConfig, languageType: value })}
+                              >
+                                <Select.Option value="Auto">Auto</Select.Option>
+                              </Select>
+                            </Form.Item>
+                          )}
+
+                          {isStepTtsProvider && (
+                            <>
+                              <Form.Item
+                                label="全局语境 (instruction)"
+                                className="mb-0"
+                                help={`${ttsConfig.instruction.length}/200`}
+                              >
+                                <Input.TextArea
+                                  rows={3}
+                                  maxLength={200}
+                                  placeholder="例如: 语气紧张，语速偏快，带明显压迫感"
+                                  value={ttsConfig.instruction}
+                                  onChange={(e) => setTtsConfig({ ...ttsConfig, instruction: e.target.value })}
+                                />
+                              </Form.Item>
+
+                              <Form.Item label="语速 (speed)" className="mb-0">
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  min="0.5"
+                                  max="2"
+                                  value={ttsConfig.speed}
+                                  onChange={(e) => setTtsConfig({ ...ttsConfig, speed: parseFloat(e.target.value) || 1 })}
+                                />
+                              </Form.Item>
+
+                              <Form.Item label="音量 (volume)" className="mb-0">
+                                <Input
+                                  type="number"
+                                  step="0.1"
+                                  min="0.1"
+                                  max="2"
+                                  value={ttsConfig.volume}
+                                  onChange={(e) => setTtsConfig({ ...ttsConfig, volume: parseFloat(e.target.value) || 1 })}
+                                />
+                              </Form.Item>
+
+                              <Form.Item label="采样率 (sample_rate)" className="mb-0">
+                                <Select
+                                  value={ttsConfig.sampleRate}
+                                  onChange={(value) => setTtsConfig({ ...ttsConfig, sampleRate: value })}
+                                >
+                                  <Select.Option value={8000}>8000</Select.Option>
+                                  <Select.Option value={16000}>16000</Select.Option>
+                                  <Select.Option value={22050}>22050</Select.Option>
+                                  <Select.Option value={24000}>24000</Select.Option>
+                                  <Select.Option value={48000}>48000</Select.Option>
+                                </Select>
+                              </Form.Item>
+                            </>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     {/* 输出配置 */}
                     <div className="workflow-config-section">
                       <div className="workflow-config-section-header">
                         <label className="font-medium text-gray-700">输出配置</label>
-                        <Button 
-                          type="dashed" 
-                          size="small" 
+                        <Button
+                          type="dashed"
+                          size="small"
                           icon={<PlusOutlined />}
                           onClick={handleAddTtsOutputParam}
                         >
                           添加
                         </Button>
                       </div>
-                      
+
                       {ttsOutputParams.map((param, index) => (
                         <div key={index} className="workflow-param-row">
-                          <Input 
+                          <Input
                             placeholder="参数名 (如: voice_url)"
                             value={param.name}
                             onChange={(e) => handleUpdateTtsOutputParam(index, 'name', e.target.value)}
@@ -1498,39 +1786,20 @@ const EditorPage = () => {
                             onChange={(e) => handleUpdateTtsOutputParam(index, 'value', e.target.value)}
                             style={{ flex: 1 }}
                           />
-                          <Button 
-                            type="text" 
-                            danger 
+                          <Button
+                            type="text"
+                            danger
                             icon={<DeleteOutlined />}
                             onClick={() => handleRemoveTtsOutputParam(index)}
                           />
                         </div>
                       ))}
-                      
+
                       {ttsOutputParams.length === 0 && (
                         <div className="workflow-config-empty">
                           暂无输出参数,点击"添加"按钮创建 voice_url 参数
                         </div>
                       )}
-                    </div>
-
-                    {/* 基本信息 */}
-                    <div className="workflow-config-section">
-                      <label className="workflow-config-section-title">基本信息</label>
-                      <Form.Item label="API Key">
-                        <Input.Password
-                          placeholder="请输入阿里百炼 API Key"
-                          value={ttsConfig.apiKey}
-                          onChange={(e) => setTtsConfig({ ...ttsConfig, apiKey: e.target.value })}
-                        />
-                      </Form.Item>
-                      <Form.Item label="模型名称">
-                        <Input
-                          placeholder="请输入模型名称"
-                          value={ttsConfig.model}
-                          onChange={(e) => setTtsConfig({ ...ttsConfig, model: e.target.value })}
-                        />
-                      </Form.Item>
                     </div>
 
                     <Button type="primary" block onClick={handleSaveTtsConfig}>
