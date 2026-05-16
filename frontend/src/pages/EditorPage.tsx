@@ -109,6 +109,8 @@ const EditorPage = () => {
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [mcpTools, setMcpTools] = useState<McpToolConfig[]>([]);
   const hasLoadedRef = useRef<number | null>(null);
+  const routeWorkflowId = id ? Number.parseInt(id, 10) : null;
+  const activeWorkflowId = Number.isFinite(routeWorkflowId) ? routeWorkflowId : currentWorkflowId;
   
   // LLM 节点配置状态
   const [llmConfig, setLlmConfig] = useState({
@@ -463,11 +465,11 @@ const EditorPage = () => {
 
   // 执行工作流(从调试抽屉调用)
   const handleExecute = async (inputData: string) => {
-    if (!currentWorkflowId) {
+    if (!activeWorkflowId) {
       throw new Error('请先保存工作流');
     }
 
-    const result = await executeWorkflow(currentWorkflowId, inputData);
+    const result = await executeWorkflow(activeWorkflowId, inputData);
     if (result.code === 200) {
       return result.data;
     } else {
@@ -477,7 +479,7 @@ const EditorPage = () => {
 
   // 打开调试抽屉
   const handleOpenDebug = () => {
-    if (!currentWorkflowId) {
+    if (!activeWorkflowId) {
       message.warning('请先保存工作流');
       return;
     }
@@ -515,11 +517,17 @@ const EditorPage = () => {
     setOutputParams(newParams);
   };
 
-  // 获取可引用的节点列表（输出节点之前的所有节点）
+  // 获取可引用的节点列表：只允许引用当前节点的直接上游节点
   const getReferenceableNodes = () => {
-    return nodes.filter(node => 
-      node.id !== selectedNode?.id && node.data?.type !== 'output'
-    );
+    if (!selectedNode) return [];
+
+    const sourceIds = Array.from(new Set(edges
+      .filter((edge) => edge.target === selectedNode.id)
+      .map((edge) => edge.source)));
+
+    return sourceIds
+      .map((sourceId) => nodes.find((node) => node.id === sourceId))
+      .filter((node): node is Node => Boolean(node));
   };
 
   // 获取节点的输出参数
@@ -561,13 +569,30 @@ const EditorPage = () => {
     }
   };
 
+  const getConfiguredOutputParamNames = (node: Node) => {
+    const nodeType = (node.data?.type as string) || '';
+    if (nodeType === 'input') {
+      return ['user_input'];
+    }
+
+    if (!Array.isArray(node.data?.outputParams)) {
+      if (nodeType === 'image_generate' || nodeType === 'video_generate') {
+        return getNodeOutputParams(nodeType);
+      }
+      return [];
+    }
+
+    return (node.data.outputParams as Array<{ name?: string }>)
+      .map((param) => param.name?.trim())
+      .filter((name): name is string => Boolean(name));
+  };
+
   // 获取所有可引用的参数（节点.参数名格式）
   const getReferenceableParams = () => {
     const params: { label: string; value: string }[] = [];
     getReferenceableNodes().forEach(node => {
-      const nodeType = (node.data?.type as string) || '';
       const nodeLabel = (node.data?.label as string) || node.id;
-      const outputParams = getNodeOutputParams(nodeType);
+      const outputParams = Array.from(new Set(getConfiguredOutputParamNames(node)));
       
       outputParams.forEach(param => {
         params.push({
@@ -1070,12 +1095,9 @@ const EditorPage = () => {
   const agentToolOptions = [
     { label: '写入记忆', value: 'memory_write' }
   ];
-  const languageModelConfigs = llmGlobalConfigs.filter(
-    (config) => normalizeProviderKey(config.provider) !== 'volcengine_agent_plan'
-  );
   const availableLlmConfigs = isGenericLlmNode || isLegacyReActNode
-    ? languageModelConfigs
-    : languageModelConfigs.filter(
+    ? llmGlobalConfigs
+    : llmGlobalConfigs.filter(
         (config) => normalizeProviderKey(config.provider) === selectedNodeProvider
       );
   const ttsProviderOptions = providerOptions.filter(option => ['qwen', 'step'].includes(option.value));
@@ -1125,6 +1147,46 @@ const EditorPage = () => {
     const updatedData = { ...selectedNode.data, ...patch };
     useWorkflowStore.getState().updateNode(selectedNode.id, updatedData);
     useWorkflowStore.getState().setSelectedNode({ ...selectedNode, data: updatedData });
+  };
+  const getAgentPlanInputParams = () => (
+    Array.isArray(selectedNode?.data?.inputParams)
+      ? selectedNode.data.inputParams as TtsInputParam[]
+      : []
+  );
+  const getAgentPlanOutputParams = () => (
+    Array.isArray(selectedNode?.data?.outputParams)
+      ? selectedNode.data.outputParams as TtsOutputParam[]
+      : []
+  );
+  const addAgentPlanInputParam = (name = '') => {
+    updateSelectedNodeData({
+      inputParams: [...getAgentPlanInputParams(), { name, type: 'reference', value: '' }]
+    });
+  };
+  const updateAgentPlanInputParam = (index: number, field: keyof TtsInputParam, value: string) => {
+    const nextParams = [...getAgentPlanInputParams()];
+    nextParams[index] = { ...nextParams[index], [field]: value };
+    updateSelectedNodeData({ inputParams: nextParams });
+  };
+  const removeAgentPlanInputParam = (index: number) => {
+    updateSelectedNodeData({
+      inputParams: getAgentPlanInputParams().filter((_, i) => i !== index)
+    });
+  };
+  const addAgentPlanOutputParam = (name = '', value = '') => {
+    updateSelectedNodeData({
+      outputParams: [...getAgentPlanOutputParams(), { name, value }]
+    });
+  };
+  const updateAgentPlanOutputParam = (index: number, field: keyof TtsOutputParam, value: string) => {
+    const nextParams = [...getAgentPlanOutputParams()];
+    nextParams[index] = { ...nextParams[index], [field]: value };
+    updateSelectedNodeData({ outputParams: nextParams });
+  };
+  const removeAgentPlanOutputParam = (index: number) => {
+    updateSelectedNodeData({
+      outputParams: getAgentPlanOutputParams().filter((_, i) => i !== index)
+    });
   };
   const selectedNodeLabel = String(selectedNode?.data?.label || selectedNode?.id || '');
 
@@ -1192,7 +1254,7 @@ const EditorPage = () => {
           <Button
             icon={<BugOutlined />}
             onClick={handleOpenDebug}
-            disabled={!currentWorkflowId}
+            disabled={!activeWorkflowId}
           >
             调试
           </Button>
@@ -1308,10 +1370,12 @@ const EditorPage = () => {
                                 placeholder="选择参数"
                                 value={param.referenceNode}
                                 onChange={(value) => handleUpdateOutputParam(index, 'referenceNode', value)}
-                                className="w-full"
+                                className="w-full workflow-reference-select"
+                                popupMatchSelectWidth={false}
+                                dropdownStyle={{ minWidth: 360 }}
                               >
                                 {getReferenceableParams().map(param => (
-                                  <Select.Option key={param.value} value={param.value}>
+                                  <Select.Option key={param.value} value={param.value} title={param.label}>
                                     {param.label}
                                   </Select.Option>
                                 ))}
@@ -1399,10 +1463,12 @@ const EditorPage = () => {
                                 placeholder="选择参数"
                                 value={param.referenceNode}
                                 onChange={(value) => handleUpdateLlmInputParam(index, 'referenceNode', value)}
-                                className="w-full"
+                                className="w-full workflow-reference-select"
+                                popupMatchSelectWidth={false}
+                                dropdownStyle={{ minWidth: 360 }}
                               >
                                 {getReferenceableParams().map(p => (
-                                  <Select.Option key={p.value} value={p.value}>
+                                  <Select.Option key={p.value} value={p.value} title={p.label}>
                                     {p.label}
                                   </Select.Option>
                                 ))}
@@ -1536,7 +1602,7 @@ const EditorPage = () => {
 	                          })}
 	                        />
 	                        <div className="workflow-field-hint">
-	                          写入记忆用于让 ReAct 在需要时保存稳定结论；联网搜索请在 MCP 工具中选择。
+	                          写入记忆用于让 ReAct 在需要时保存稳定结论。
 	                        </div>
 	                      </Form.Item>
 	                    )}
@@ -1829,10 +1895,13 @@ const EditorPage = () => {
                                 placeholder="选择引用参数"
                                 value={param.referenceNode}
                                 onChange={(value) => handleUpdateTtsInputParam(index, 'referenceNode', value)}
+                                className="workflow-reference-select"
+                                popupMatchSelectWidth={false}
+                                dropdownStyle={{ minWidth: 360 }}
                                 style={{ width: '100%' }}
                               >
                                 {getReferenceableParams().map((p) => (
-                                  <Select.Option key={p.value} value={p.value}>
+                                  <Select.Option key={p.value} value={p.value} title={p.label}>
                                     {p.label}
                                   </Select.Option>
                                 ))}
@@ -2274,12 +2343,86 @@ const EditorPage = () => {
 
 	                    {selectedNodeType === 'image_generate' && (
 	                      <>
+	                        <div className="workflow-config-section">
+	                          <div className="workflow-config-section-header">
+	                            <label className="font-medium text-gray-700">输入配置</label>
+	                            <Button
+	                              type="dashed"
+	                              size="small"
+	                              icon={<PlusOutlined />}
+	                              onClick={() => addAgentPlanInputParam('prompt')}
+	                            >
+	                              添加
+	                            </Button>
+	                          </div>
+	                          {getAgentPlanInputParams().map((param, index) => (
+	                            <div key={index} className="mb-4 p-3 bg-gray-50 rounded">
+	                              <div className="workflow-param-row is-compact">
+	                                <Input
+	                                  placeholder="参数名"
+	                                  value={param.name}
+	                                  onChange={(e) => updateAgentPlanInputParam(index, 'name', e.target.value)}
+	                                  style={{ width: 120 }}
+	                                />
+	                                <Select
+	                                  value={param.type}
+	                                  onChange={(value) => updateAgentPlanInputParam(index, 'type', value)}
+	                                  style={{ width: 100 }}
+	                                >
+	                                  <Select.Option value="input">输入</Select.Option>
+	                                  <Select.Option value="reference">引用</Select.Option>
+	                                </Select>
+	                                <Button
+	                                  type="text"
+	                                  danger
+	                                  icon={<DeleteOutlined />}
+	                                  onClick={() => removeAgentPlanInputParam(index)}
+	                                />
+	                              </div>
+	                              <div>
+	                                {param.type === 'input' ? (
+	                                  <Input.TextArea
+	                                    placeholder="输入值"
+	                                    value={param.value}
+	                                    onChange={(e) => updateAgentPlanInputParam(index, 'value', e.target.value)}
+	                                    rows={2}
+	                                  />
+	                                ) : (
+	                                  <Select
+	                                    placeholder="选择引用参数"
+	                                    value={param.referenceNode}
+	                                    onChange={(value) => updateAgentPlanInputParam(index, 'referenceNode', value)}
+	                                    className="workflow-reference-select"
+	                                    popupMatchSelectWidth={false}
+	                                    dropdownStyle={{ minWidth: 360 }}
+	                                    style={{ width: '100%' }}
+	                                  >
+	                                    {getReferenceableParams().map((p) => (
+	                                      <Select.Option key={p.value} value={p.value} title={p.label}>
+	                                        {p.label}
+	                                      </Select.Option>
+	                                    ))}
+	                                  </Select>
+	                                )}
+	                              </div>
+	                            </div>
+	                          ))}
+	                          {getAgentPlanInputParams().length === 0 && (
+	                            <div className="workflow-config-empty">
+	                              暂无输入参数，点击"添加"创建 prompt 引用。
+	                            </div>
+	                          )}
+	                        </div>
 	                        <Form.Item label="图片提示词">
 	                          <Input.TextArea
 	                            rows={5}
+	                            placeholder={`例如：生成一张科技媒体风格的公众号封面图，主体是一位年轻程序员坐在双屏电脑前，屏幕上有 AI 工作流节点和代码界面，环境是现代办公室，蓝白色科技感光效，画面干净，高级感，16:9，高清，避免文字、水印、畸形手指。`}
 	                            value={(selectedNode.data?.prompt as string) || ''}
 	                            onChange={(e) => updateSelectedNodeData({ prompt: e.target.value })}
 	                          />
+	                          <div className="workflow-field-hint">
+	                            可写主体、场景、风格、构图、比例、质量要求和负面约束；如果上方输入配置里定义了 prompt 引用，会优先使用引用内容。
+	                          </div>
 	                        </Form.Item>
 	                        <Form.Item label="参考图 URL">
 	                          <Input
@@ -2294,17 +2437,135 @@ const EditorPage = () => {
 	                            onChange={(e) => updateSelectedNodeData({ size: e.target.value })}
 	                          />
 	                        </Form.Item>
+	                        <div className="workflow-config-section">
+	                          <div className="workflow-config-section-header">
+	                            <label className="font-medium text-gray-700">输出配置</label>
+	                            <Button
+	                              type="dashed"
+	                              size="small"
+	                              icon={<PlusOutlined />}
+	                              onClick={() => addAgentPlanOutputParam('image_url', 'imageUrl')}
+	                            >
+	                              添加
+	                            </Button>
+	                          </div>
+	                          {getAgentPlanOutputParams().map((param, index) => (
+	                            <div key={index} className="workflow-param-row">
+	                              <Input
+	                                placeholder="输出名，如 image_url"
+	                                value={param.name}
+	                                onChange={(e) => updateAgentPlanOutputParam(index, 'name', e.target.value)}
+	                                style={{ flex: 1 }}
+	                              />
+	                              <Select
+	                                placeholder="来源字段"
+	                                value={param.value || undefined}
+	                                onChange={(value) => updateAgentPlanOutputParam(index, 'value', value)}
+	                                style={{ flex: 1 }}
+	                                options={getNodeOutputParams('image_generate').map((field) => ({
+	                                  value: field,
+	                                  label: field
+	                                }))}
+	                              />
+	                              <Button
+	                                type="text"
+	                                danger
+	                                icon={<DeleteOutlined />}
+	                                onClick={() => removeAgentPlanOutputParam(index)}
+	                              />
+	                            </div>
+	                          ))}
+	                          {getAgentPlanOutputParams().length === 0 && (
+	                            <div className="workflow-config-empty">
+	                              默认输出 imageUrl、imageUrls、prompt、output；点击"添加"可映射成自定义输出名。
+	                            </div>
+	                          )}
+	                        </div>
 	                      </>
 	                    )}
 
 	                    {selectedNodeType === 'video_generate' && (
 	                      <>
+	                        <div className="workflow-config-section">
+	                          <div className="workflow-config-section-header">
+	                            <label className="font-medium text-gray-700">输入配置</label>
+	                            <Button
+	                              type="dashed"
+	                              size="small"
+	                              icon={<PlusOutlined />}
+	                              onClick={() => addAgentPlanInputParam('prompt')}
+	                            >
+	                              添加
+	                            </Button>
+	                          </div>
+	                          {getAgentPlanInputParams().map((param, index) => (
+	                            <div key={index} className="mb-4 p-3 bg-gray-50 rounded">
+	                              <div className="workflow-param-row is-compact">
+	                                <Input
+	                                  placeholder="参数名"
+	                                  value={param.name}
+	                                  onChange={(e) => updateAgentPlanInputParam(index, 'name', e.target.value)}
+	                                  style={{ width: 120 }}
+	                                />
+	                                <Select
+	                                  value={param.type}
+	                                  onChange={(value) => updateAgentPlanInputParam(index, 'type', value)}
+	                                  style={{ width: 100 }}
+	                                >
+	                                  <Select.Option value="input">输入</Select.Option>
+	                                  <Select.Option value="reference">引用</Select.Option>
+	                                </Select>
+	                                <Button
+	                                  type="text"
+	                                  danger
+	                                  icon={<DeleteOutlined />}
+	                                  onClick={() => removeAgentPlanInputParam(index)}
+	                                />
+	                              </div>
+	                              <div>
+	                                {param.type === 'input' ? (
+	                                  <Input.TextArea
+	                                    placeholder="输入值"
+	                                    value={param.value}
+	                                    onChange={(e) => updateAgentPlanInputParam(index, 'value', e.target.value)}
+	                                    rows={2}
+	                                  />
+	                                ) : (
+	                                  <Select
+	                                    placeholder="选择引用参数"
+	                                    value={param.referenceNode}
+	                                    onChange={(value) => updateAgentPlanInputParam(index, 'referenceNode', value)}
+	                                    className="workflow-reference-select"
+	                                    popupMatchSelectWidth={false}
+	                                    dropdownStyle={{ minWidth: 360 }}
+	                                    style={{ width: '100%' }}
+	                                  >
+	                                    {getReferenceableParams().map((p) => (
+	                                      <Select.Option key={p.value} value={p.value} title={p.label}>
+	                                        {p.label}
+	                                      </Select.Option>
+	                                    ))}
+	                                  </Select>
+	                                )}
+	                              </div>
+	                            </div>
+	                          ))}
+	                          {getAgentPlanInputParams().length === 0 && (
+	                            <div className="workflow-config-empty">
+	                              暂无输入参数，点击"添加"创建 prompt 引用。
+	                            </div>
+	                          )}
+	                        </div>
 	                        <Form.Item label="视频提示词">
 	                          <Input.TextArea
 	                            rows={5}
+	                            placeholder="例如：一位程序员在现代办公室内操作 AI 工作流系统，屏幕上节点流转发光，镜头缓慢推进，真实摄影风格，柔和自然光，画面稳定，高清，无文字水印。"
 	                            value={(selectedNode.data?.prompt as string) || ''}
 	                            onChange={(e) => updateSelectedNodeData({ prompt: e.target.value })}
 	                          />
+	                          <div className="workflow-field-hint">
+	                            如果上方输入配置里定义了 prompt 引用，会优先使用引用内容。
+	                          </div>
 	                        </Form.Item>
 	                        <Form.Item label="首帧/参考图 URL">
 	                          <Input
@@ -2319,6 +2580,50 @@ const EditorPage = () => {
 	                            onChange={(e) => updateSelectedNodeData({ duration: parseInt(e.target.value, 10) || 5 })}
 	                          />
 	                        </Form.Item>
+	                        <div className="workflow-config-section">
+	                          <div className="workflow-config-section-header">
+	                            <label className="font-medium text-gray-700">输出配置</label>
+	                            <Button
+	                              type="dashed"
+	                              size="small"
+	                              icon={<PlusOutlined />}
+	                              onClick={() => addAgentPlanOutputParam('video_url', 'videoUrl')}
+	                            >
+	                              添加
+	                            </Button>
+	                          </div>
+	                          {getAgentPlanOutputParams().map((param, index) => (
+	                            <div key={index} className="workflow-param-row">
+	                              <Input
+	                                placeholder="输出名，如 video_url"
+	                                value={param.name}
+	                                onChange={(e) => updateAgentPlanOutputParam(index, 'name', e.target.value)}
+	                                style={{ flex: 1 }}
+	                              />
+	                              <Select
+	                                placeholder="来源字段"
+	                                value={param.value || undefined}
+	                                onChange={(value) => updateAgentPlanOutputParam(index, 'value', value)}
+	                                style={{ flex: 1 }}
+	                                options={getNodeOutputParams('video_generate').map((field) => ({
+	                                  value: field,
+	                                  label: field
+	                                }))}
+	                              />
+	                              <Button
+	                                type="text"
+	                                danger
+	                                icon={<DeleteOutlined />}
+	                                onClick={() => removeAgentPlanOutputParam(index)}
+	                              />
+	                            </div>
+	                          ))}
+	                          {getAgentPlanOutputParams().length === 0 && (
+	                            <div className="workflow-config-empty">
+	                              默认输出 videoUrl、coverUrl、taskId、status、output；点击"添加"可映射成自定义输出名。
+	                            </div>
+	                          )}
+	                        </div>
 	                      </>
 	                    )}
 
@@ -2348,6 +2653,8 @@ const EditorPage = () => {
       {/* 调试抽屉 */}
       <DebugDrawer
         open={debugDrawerOpen}
+        workflowId={activeWorkflowId}
+        totalNodeCount={nodes.length}
         onClose={() => setDebugDrawerOpen(false)}
         onExecute={handleExecute}
       />

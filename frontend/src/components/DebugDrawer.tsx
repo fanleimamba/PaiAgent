@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Drawer, Input, Button, Progress, Tag, Collapse, Alert } from 'antd';
 import { PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined } from '@ant-design/icons';
 import ReactMarkdown from 'react-markdown';
@@ -12,7 +12,6 @@ import {
   executeWorkflowStream,
   getLatestExecution,
 } from '../api/workflow';
-import { useWorkflowStore } from '../store/workflowStore';
 
 const { TextArea } = Input;
 
@@ -37,6 +36,8 @@ interface ExecutionResponse {
 
 interface DebugDrawerProps {
   open: boolean;
+  workflowId: number | null;
+  totalNodeCount: number;
   onClose: () => void;
   onExecute: (inputData: string) => Promise<ExecutionResponse>;
 }
@@ -56,6 +57,165 @@ const parseJsonIfPossible = (value: string) => {
 const normalizeValue = (value: unknown): unknown => (
   typeof value === 'string' ? parseJsonIfPossible(value) : value
 );
+
+const IMAGE_URL_PATTERN = /\.(png|jpe?g|gif|webp|bmp|svg)(?:[?#].*)?$/i;
+const AUDIO_URL_PATTERN = /\.(mp3|wav|ogg|m4a|aac|flac)(?:[?#].*)?$/i;
+const VIDEO_URL_PATTERN = /\.(mp4|webm|mov|m4v)(?:[?#].*)?$/i;
+
+const normalizeMediaUrl = (url: string) => (
+  url.startsWith('/') ? buildBackendUrl(url) : url
+);
+
+const isLikelyImageUrl = (value: string) => (
+  IMAGE_URL_PATTERN.test(value)
+  || value.includes('/images/')
+  || value.includes('/image/')
+);
+
+const isLikelyAudioUrl = (value: string) => (
+  AUDIO_URL_PATTERN.test(value)
+  || value.startsWith('/audio/')
+  || value.includes('/audio/')
+);
+
+const isLikelyVideoUrl = (value: string) => (
+  VIDEO_URL_PATTERN.test(value)
+  || value.includes('/videos/')
+  || value.includes('/video/')
+);
+
+const extractAudioSrc = (value: string) => {
+  if (!value.includes('<audio') || !value.includes('src=')) {
+    return null;
+  }
+  const srcMatch = value.match(/src=["']([^"']+)["']/);
+  return srcMatch?.[1] || null;
+};
+
+const extractUrls = (value: string) => (
+  value.match(/https?:\/\/[^\s"'<>，。；；)）]+|\/[^\s"'<>，。；；)）]+/g) || []
+);
+
+const uniqueUrls = (urls: string[]) => Array.from(new Set(
+  urls
+    .map((url) => url.trim())
+    .filter(Boolean)
+    .map(normalizeMediaUrl)
+));
+
+const collectImageUrls = (value: unknown): string[] => {
+  const normalized = normalizeValue(value);
+  const record = isRecord(normalized) && isRecord(normalized.output)
+    ? normalized.output
+    : normalized;
+
+  if (typeof record === 'string') {
+    return uniqueUrls(extractUrls(record).filter(isLikelyImageUrl));
+  }
+
+  if (!isRecord(record)) {
+    return [];
+  }
+
+  const urls: string[] = [];
+  const appendValue = (candidate: unknown) => {
+    if (typeof candidate === 'string') {
+      const extractedUrls = extractUrls(candidate).filter(isLikelyImageUrl);
+      if (extractedUrls.length > 0) {
+        urls.push(...extractedUrls);
+      } else if (isLikelyImageUrl(candidate)) {
+        urls.push(candidate);
+      }
+    } else if (Array.isArray(candidate)) {
+      candidate.forEach(appendValue);
+    }
+  };
+
+  appendValue(record.imageUrls);
+  appendValue(record.images);
+  appendValue(record.imageUrl);
+  appendValue(record.image_url);
+  appendValue(record.url);
+  appendValue(record.output);
+
+  return uniqueUrls(urls);
+};
+
+const collectVideoUrls = (value: unknown): string[] => {
+  const normalized = normalizeValue(value);
+  const record = isRecord(normalized) && isRecord(normalized.output)
+    ? normalized.output
+    : normalized;
+
+  if (typeof record === 'string') {
+    return uniqueUrls(extractUrls(record).filter(isLikelyVideoUrl));
+  }
+
+  if (!isRecord(record)) {
+    return [];
+  }
+
+  const urls: string[] = [];
+  const appendValue = (candidate: unknown) => {
+    if (typeof candidate === 'string') {
+      const extractedUrls = extractUrls(candidate).filter(isLikelyVideoUrl);
+      if (extractedUrls.length > 0) {
+        urls.push(...extractedUrls);
+      } else if (isLikelyVideoUrl(candidate)) {
+        urls.push(candidate);
+      }
+    } else if (Array.isArray(candidate)) {
+      candidate.forEach(appendValue);
+    }
+  };
+
+  appendValue(record.videoUrls);
+  appendValue(record.videos);
+  appendValue(record.videoUrl);
+  appendValue(record.video_url);
+  appendValue(record.url);
+  appendValue(record.output);
+
+  return uniqueUrls(urls);
+};
+
+const collectAudioOutput = (value: unknown): { audioUrl: string; fileName?: string } | null => {
+  const normalized = normalizeValue(value);
+  const record = isRecord(normalized) && isRecord(normalized.output)
+    ? normalized.output
+    : normalized;
+
+  if (typeof record === 'string') {
+    const embeddedSrc = extractAudioSrc(record);
+    const audioUrl = embeddedSrc || (isLikelyAudioUrl(record) ? record : null);
+    return audioUrl ? { audioUrl: normalizeMediaUrl(audioUrl) } : null;
+  }
+
+  if (!isRecord(record)) {
+    return null;
+  }
+
+  const fileName = typeof record.fileName === 'string' ? record.fileName : undefined;
+  const directAudioUrl = typeof record.audioUrl === 'string'
+    ? record.audioUrl
+    : typeof record.audio_url === 'string'
+      ? record.audio_url
+      : null;
+
+  if (directAudioUrl) {
+    return { audioUrl: normalizeMediaUrl(directAudioUrl), fileName };
+  }
+
+  if (typeof record.output === 'string') {
+    const embeddedSrc = extractAudioSrc(record.output);
+    const audioUrl = embeddedSrc || (isLikelyAudioUrl(record.output) ? record.output : null);
+    if (audioUrl) {
+      return { audioUrl: normalizeMediaUrl(audioUrl), fileName };
+    }
+  }
+
+  return null;
+};
 
 const getFriendlyOutputText = (value: unknown): string | null => {
   const normalizedValue = typeof value === 'string' ? parseJsonIfPossible(value) : value;
@@ -199,17 +359,23 @@ const DebugValue = ({ value, preferOutputText = false }: { value: unknown; prefe
   );
 };
 
-const RichOutput = ({ value, preferOutputText = false }: { value: unknown; preferOutputText?: boolean }) => {
+const RichOutput = ({
+  value,
+  preferOutputText = false,
+  renderMedia = false,
+}: {
+  value: unknown;
+  preferOutputText?: boolean;
+  renderMedia?: boolean;
+}) => {
   const normalized = normalizeValue(value);
   const record = isRecord(normalized) && isRecord(normalized.output)
     ? normalized.output
     : normalized;
 
   if (isRecord(record)) {
-    const imageUrls = Array.isArray(record.imageUrls)
-      ? record.imageUrls.filter((url): url is string => typeof url === 'string')
-      : (typeof record.imageUrl === 'string' ? [record.imageUrl] : []);
-    const videoUrl = typeof record.videoUrl === 'string' ? record.videoUrl : null;
+    const imageUrls = renderMedia ? collectImageUrls(record) : [];
+    const videoUrl = renderMedia ? collectVideoUrls(record)[0] || null : null;
     const summary = typeof record.summary === 'string' ? record.summary : null;
     const context = typeof record.context === 'string' ? record.context : null;
     const citations = Array.isArray(record.citations) ? record.citations : [];
@@ -246,13 +412,13 @@ const RichOutput = ({ value, preferOutputText = false }: { value: unknown; prefe
   return <DebugValue value={value} preferOutputText={preferOutputText} />;
 };
 
-const DebugDrawer = ({ open, onClose }: DebugDrawerProps) => {
+const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerProps) => {
   const [inputData, setInputData] = useState('');
   const [executing, setExecuting] = useState(false);
   const [executionResult, setExecutionResult] = useState<ExecutionResponse | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [nodeStatusMap, setNodeStatusMap] = useState<Map<string, NodeResult>>(new Map());
-  const { currentWorkflowId } = useWorkflowStore();
+  const latestExecutionRequestRef = useRef(0);
 
   const addLog = (message: string) => {
     const timestamp = new Date().toLocaleTimeString();
@@ -330,24 +496,44 @@ const DebugDrawer = ({ open, onClose }: DebugDrawerProps) => {
     formatToolTraceLogs(node.output).forEach(addLog);
   };
 
+  const resetExecutionState = () => {
+    setInputData('');
+    setExecutionResult(null);
+    setLogs([]);
+    setNodeStatusMap(new Map());
+  };
+
   const loadLatestExecution = async () => {
-    if (!currentWorkflowId || executing) {
+    const targetWorkflowId = workflowId;
+    const requestId = ++latestExecutionRequestRef.current;
+
+    if (!targetWorkflowId || executing) {
       return;
     }
 
     try {
-      const result = await getLatestExecution(currentWorkflowId);
+      const result = await getLatestExecution(targetWorkflowId);
+      if (latestExecutionRequestRef.current !== requestId) {
+        return;
+      }
       if (result.code === 200 && result.data) {
         restoreExecution(result.data);
       } else if (result.code === 200) {
-        setExecutionResult(null);
-        setLogs([]);
-        setNodeStatusMap(new Map());
+        resetExecutionState();
+        setLogs([`[历史] 当前工作流 #${targetWorkflowId} 暂无执行记录`]);
       }
     } catch (error) {
+      if (latestExecutionRequestRef.current !== requestId) {
+        return;
+      }
       console.warn('加载最近一次执行记录失败:', error);
     }
   };
+
+  useEffect(() => {
+    latestExecutionRequestRef.current += 1;
+    resetExecutionState();
+  }, [workflowId]);
 
   useEffect(() => {
     if (!open || executing) {
@@ -355,7 +541,7 @@ const DebugDrawer = ({ open, onClose }: DebugDrawerProps) => {
     }
 
     loadLatestExecution();
-  }, [open, currentWorkflowId]);
+  }, [open, workflowId]);
 
   const handleExecute = async () => {
     if (!inputData.trim()) {
@@ -363,7 +549,7 @@ const DebugDrawer = ({ open, onClose }: DebugDrawerProps) => {
       return;
     }
 
-    if (!currentWorkflowId) {
+    if (!workflowId) {
       addLog('❌ 错误: 请先保存工作流');
       return;
     }
@@ -379,7 +565,7 @@ const DebugDrawer = ({ open, onClose }: DebugDrawerProps) => {
       const tempNodeStatusMap = new Map<string, NodeResult>();
       
       await executeWorkflowStream(
-        currentWorkflowId,
+        workflowId,
         inputData,
         (event: ExecutionEvent) => {
           console.log('收到事件:', event);
@@ -488,17 +674,22 @@ const DebugDrawer = ({ open, onClose }: DebugDrawerProps) => {
   };
 
   const getProgress = () => {
-    if (!executionResult) {
-      const total = nodeStatusMap.size;
-      if (total === 0) return 0;
-      const completed = Array.from(nodeStatusMap.values()).filter((r) => r.status === 'SUCCESS').length;
-      return Math.round((completed / total) * 100);
-    }
-    const total = executionResult.nodeResults.length;
+    const total = getProgressTotal();
     if (total === 0) return 0;
-    const completed = executionResult.nodeResults.filter((r) => r.status === 'SUCCESS').length;
+    const completed = getCompletedNodeCount();
     return Math.round((completed / total) * 100);
   };
+
+  const getProgressTotal = () => {
+    if (executionResult) {
+      return executionResult.nodeResults.length;
+    }
+    return totalNodeCount > 0 ? totalNodeCount : nodeStatusMap.size;
+  };
+
+  const getCompletedNodeCount = () => (
+    currentNodeResults.filter((r) => r.status === 'SUCCESS').length
+  );
 
   const renderNodeResultItem = (nodeResult: NodeResult) => {
     let statusColor = 'default';
@@ -616,7 +807,7 @@ const DebugDrawer = ({ open, onClose }: DebugDrawerProps) => {
                     status={executionResult?.status === 'SUCCESS' ? 'success' : executionResult?.status === 'FAILED' ? 'exception' : 'active'} 
                   />
                   <div className="mt-2 text-sm text-gray-600">
-                    已完成节点: {currentNodeResults.filter((r) => r.status === 'SUCCESS').length} / {currentNodeResults.length}
+                    已完成节点: {getCompletedNodeCount()} / {getProgressTotal()}
                   </div>
                 </>
               )}
@@ -653,43 +844,33 @@ const DebugDrawer = ({ open, onClose }: DebugDrawerProps) => {
             </div>
             <div className="debug-final-output">
               {(() => {
-                let audioUrl: string | null = null;
-                let fileName: string | undefined = undefined;
-                
-                let outputData = executionResult.outputData;
-                if (typeof outputData === 'string') {
-                  outputData = parseJsonIfPossible(outputData);
+                const imageUrls = collectImageUrls(executionResult.outputData);
+                const videoUrls = collectVideoUrls(executionResult.outputData);
+                if (imageUrls.length > 0 || videoUrls.length > 0) {
+                  return (
+                    <div className="debug-final-media">
+                      {imageUrls.length > 0 && (
+                        <div className="debug-media-grid">
+                          {imageUrls.map((url) => (
+                            <a key={url} href={url} target="_blank" rel="noreferrer" className="debug-image-link">
+                              <img src={url} alt="workflow output" className="debug-generated-image" />
+                            </a>
+                          ))}
+                        </div>
+                      )}
+                      {videoUrls.map((url) => (
+                        <video key={url} src={url} controls className="debug-generated-video" />
+                      ))}
+                    </div>
+                  );
                 }
-                
-                if (isRecord(outputData)) {
-                  fileName = typeof outputData.fileName === 'string' ? outputData.fileName : undefined;
-                  
-                  if (typeof outputData.audioUrl === 'string') {
-                    audioUrl = outputData.audioUrl;
-                  }
-                  
-                  if (!audioUrl && typeof outputData.output === 'string') {
-                    const output = outputData.output;
-                    if (output.includes('http://') || output.includes('https://')) {
-                      audioUrl = output;
-                    } else if (output.includes('<audio') && output.includes('src=')) {
-                      const srcMatch = output.match(/src="([^"]+)"/);
-                      if (srcMatch && srcMatch[1]) {
-                        audioUrl = srcMatch[1];
-                      }
-                    } else if (output.startsWith('/audio/')) {
-                      audioUrl = buildBackendUrl(output);
-                    }
-                  }
-                }
-                
-                console.log('检测到的 audioUrl:', audioUrl);
-                
-                if (audioUrl) {
+
+                const audioOutput = collectAudioOutput(executionResult.outputData);
+                if (audioOutput) {
                   return (
                     <AudioPlayer 
-                      audioUrl={audioUrl}
-                      fileName={fileName}
+                      audioUrl={audioOutput.audioUrl}
+                      fileName={audioOutput.fileName}
                     />
                   );
                 }

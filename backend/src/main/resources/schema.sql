@@ -46,6 +46,7 @@ CREATE TABLE IF NOT EXISTS execution_record (
     executed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '执行时间',
     deleted TINYINT DEFAULT 0 COMMENT '逻辑删除标识(0-未删除,1-已删除)',
     INDEX idx_flow_id (flow_id),
+    INDEX idx_flow_latest (flow_id, id),
     INDEX idx_executed_at (executed_at),
     INDEX idx_status (status)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='执行记录表';

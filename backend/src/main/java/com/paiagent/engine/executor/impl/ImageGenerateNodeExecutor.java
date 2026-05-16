@@ -33,7 +33,10 @@ public class ImageGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
     @Override
     @SuppressWarnings("unchecked")
     public Map<String, Object> execute(WorkflowNode node, Map<String, Object> input) throws Exception {
-        String prompt = textValue(node, input, "prompt", "input");
+        String prompt = configuredTextInput(node, input, "prompt");
+        if (prompt == null) {
+            prompt = textValue(node, input, "prompt", "input");
+        }
         if (prompt == null) {
             throw new IllegalArgumentException("图片生成节点缺少 prompt");
         }
@@ -64,6 +67,7 @@ public class ImageGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
         output.put("model", config.model());
         output.put("metadata", result.get("metadata"));
         output.put("output", persistedUrls.isEmpty() ? null : persistedUrls.get(0));
+        applyOutputParams(node, output);
         return output;
     }
 

@@ -51,6 +51,23 @@ const WORKFLOW_EDGE_MARKER = {
   height: 20,
 };
 
+const getDefaultNodeData = (type: string) => {
+  switch (type) {
+    case 'image_generate':
+      return {
+        inputParams: [{ name: 'prompt', type: 'reference', value: '' }],
+        outputParams: [{ name: 'image_url', value: 'imageUrl' }],
+      };
+    case 'video_generate':
+      return {
+        inputParams: [{ name: 'prompt', type: 'reference', value: '' }],
+        outputParams: [{ name: 'video_url', value: 'videoUrl' }],
+      };
+    default:
+      return {};
+  }
+};
+
 const nodeMeta: Record<string, { icon: string; tone: string; caption: string }> = {
   input: { icon: 'IN', tone: 'node-tone-green', caption: 'Start input' },
   output: { icon: 'OUT', tone: 'node-tone-purple', caption: 'Final response' },
@@ -260,7 +277,7 @@ const FlowCanvas = ({ onNodeClick }: FlowCanvasProps) => {
         id: `${type}-${Date.now()}`,
         type: 'workflow',
         position,
-        data: { label: label || type, type },
+        data: { label: label || type, type, ...getDefaultNodeData(type) },
       };
 
       setNodes((nds) => {

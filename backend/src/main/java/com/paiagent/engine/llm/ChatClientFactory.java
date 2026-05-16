@@ -7,7 +7,10 @@ import org.springframework.ai.model.function.FunctionCallback;
 import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
+import org.springframework.ai.retry.RetryUtils;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.RestClient;
+import org.springframework.web.reactive.function.client.WebClient;
 
 import java.util.List;
 import java.util.Locale;
@@ -58,8 +61,10 @@ public class ChatClientFactory {
                 normalizedProvider, apiUrl, model, temperature, functions.size());
 
         ChatModel chatModel = switch (normalizedProvider) {
-            case "openai", "deepseek", "qwen", "step", "zhipu", "ai_ping", "volcengine_agent_plan" ->
+            case "openai", "deepseek", "qwen", "step", "zhipu", "ai_ping" ->
                     createOpenAICompatibleModel(apiUrl, apiKey, model, temperature);
+            case "volcengine_agent_plan" ->
+                    createVolcengineArkChatModel(apiUrl, apiKey, model, temperature);
             default -> throw new IllegalArgumentException("不支持的提供商类型: " + provider);
         };
 
@@ -100,6 +105,35 @@ public class ChatClientFactory {
     }
 
     /**
+     * Agent Plan 的 OpenAI 兼容 Chat 接口路径是 /api/plan/v3/chat/completions。
+     * Spring AI 默认会拼 /v1/chat/completions，这里显式覆盖为 Agent Plan 的路径。
+     */
+    private ChatModel createVolcengineArkChatModel(String apiUrl, String apiKey,
+                                                    String model, Double temperature) {
+        String baseUrl = normalizeAgentPlanBaseUrl(apiUrl);
+        if (!baseUrl.equals(apiUrl)) {
+            log.warn("检测到 Agent Plan 配置地址包含接口路径，已自动归一化: {} -> {}{}", apiUrl, baseUrl, "/api/plan/v3/chat/completions");
+        }
+
+        OpenAiApi openAiApi = new OpenAiApi(
+                baseUrl,
+                apiKey,
+                "/api/plan/v3/chat/completions",
+                "/api/plan/v3/embeddings",
+                RestClient.builder(),
+                WebClient.builder(),
+                RetryUtils.DEFAULT_RESPONSE_ERROR_HANDLER
+        );
+
+        OpenAiChatOptions options = OpenAiChatOptions.builder()
+                .model(model)
+                .temperature(temperature)
+                .build();
+
+        return new OpenAiChatModel(openAiApi, options);
+    }
+
+    /**
      * Spring AI 的 OpenAiApi 会自行拼接 /v1/chat/completions，
      * 这里统一将用户输入的 URL 归一化为服务根地址，兼容误填完整接口地址的情况。
      */
@@ -107,6 +141,13 @@ public class ChatClientFactory {
         String normalized = stripTrailingSlash(apiUrl == null ? "" : apiUrl.trim());
         normalized = stripSuffixIgnoreCase(normalized, CHAT_COMPLETIONS_SUFFIX);
         normalized = stripSuffixIgnoreCase(normalized, V1_SUFFIX);
+        return stripTrailingSlash(normalized);
+    }
+
+    private String normalizeAgentPlanBaseUrl(String apiUrl) {
+        String normalized = stripTrailingSlash(apiUrl == null ? "" : apiUrl.trim());
+        normalized = stripSuffixIgnoreCase(normalized, "/api/plan/v3/chat/completions");
+        normalized = stripSuffixIgnoreCase(normalized, "/api/plan/v3");
         return stripTrailingSlash(normalized);
     }
 

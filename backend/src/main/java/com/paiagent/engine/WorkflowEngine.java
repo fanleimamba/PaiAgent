@@ -180,6 +180,7 @@ public class WorkflowEngine implements WorkflowExecutor {
         response.setNodeResults(nodeResults);
         response.setOutputData(outputData);
         response.setDuration(duration);
+        response.setErrorMessage(errorMessage);
         
         return response;
     }
@@ -200,14 +201,18 @@ public class WorkflowEngine implements WorkflowExecutor {
         if (incomingEdges == null || incomingEdges.isEmpty()) {
             return fallbackInput;
         }
-        Map<String, Object> resolved = null;
+        Map<String, Object> resolved = new LinkedHashMap<>();
         for (WorkflowEdge edge : incomingEdges) {
             Map<String, Object> sourceOutput = nodeOutputs.get(edge.getSource());
             if (sourceOutput != null) {
-                resolved = sourceOutput;
+                resolved.putAll(sourceOutput);
             }
         }
-        return resolved != null ? resolved : fallbackInput;
+        if (resolved.isEmpty()) {
+            return fallbackInput;
+        }
+        resolved.put("__nodeOutputs__", nodeOutputs);
+        return resolved;
     }
     
     /**

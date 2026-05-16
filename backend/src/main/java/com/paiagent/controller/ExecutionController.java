@@ -73,7 +73,6 @@ public class ExecutionController {
 
         LambdaQueryWrapper<ExecutionRecord> wrapper = new LambdaQueryWrapper<>();
         wrapper.eq(ExecutionRecord::getFlowId, id)
-               .orderByDesc(ExecutionRecord::getExecutedAt)
                .orderByDesc(ExecutionRecord::getId)
                .last("LIMIT 1");
 

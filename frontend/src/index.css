@@ -386,6 +386,20 @@ select {
   background: transparent;
 }
 
+.workflow-reference-select {
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.workflow-reference-select .ant-select-selection-item,
+.workflow-reference-select .ant-select-selection-placeholder {
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .workflow-config-empty {
   padding: 16px 10px;
   border-radius: 8px;
@@ -916,6 +930,11 @@ select {
   min-height: 40px;
 }
 
+.debug-final-media {
+  display: grid;
+  gap: 10px;
+}
+
 .debug-log-list {
   display: grid;
   gap: 6px;
@@ -1087,6 +1106,11 @@ select {
   border: 1px solid #dbe5f2;
   border-radius: 8px;
   background: #f8fafc;
+}
+
+.debug-image-link {
+  display: block;
+  min-width: 0;
 }
 
 .debug-generated-video {

@@ -4,6 +4,7 @@ import com.paiagent.engine.executor.NodeExecutor;
 import com.paiagent.engine.model.WorkflowNode;
 import org.springframework.util.StringUtils;
 
+import java.util.List;
 import java.util.Map;
 
 abstract class AbstractAgentPlanNodeExecutor implements NodeExecutor {
@@ -25,6 +26,74 @@ abstract class AbstractAgentPlanNodeExecutor implements NodeExecutor {
         }
         Object output = input.get("output");
         return StringUtils.hasText(asText(output)) ? asText(output) : null;
+    }
+
+    @SuppressWarnings("unchecked")
+    protected String configuredTextInput(WorkflowNode node, Map<String, Object> input, String paramName) {
+        Object paramsValue = node.getData().get("inputParams");
+        if (!(paramsValue instanceof List<?> inputParams)) {
+            return null;
+        }
+
+        for (Object item : inputParams) {
+            if (!(item instanceof Map<?, ?> rawParam)) {
+                continue;
+            }
+            Map<String, Object> param = (Map<String, Object>) rawParam;
+            if (!paramName.equals(asText(param.get("name")))) {
+                continue;
+            }
+
+            String type = asText(param.get("type"));
+            if ("input".equals(type)) {
+                return asText(param.get("value"));
+            }
+            if ("reference".equals(type)) {
+                String referenceNode = asText(param.get("referenceNode"));
+                String referenceKey = extractReferenceKey(referenceNode);
+                if (StringUtils.hasText(referenceKey)) {
+                    String value = asText(input.get(referenceKey));
+                    if (StringUtils.hasText(value)) {
+                        return value;
+                    }
+                    if ("user_input".equals(referenceKey)) {
+                        return asText(input.get("input"));
+                    }
+                }
+            }
+        }
+        return null;
+    }
+
+    @SuppressWarnings("unchecked")
+    protected void applyOutputParams(WorkflowNode node, Map<String, Object> output) {
+        Object paramsValue = node.getData().get("outputParams");
+        if (!(paramsValue instanceof List<?> outputParams)) {
+            return;
+        }
+        for (Object item : outputParams) {
+            if (!(item instanceof Map<?, ?> rawParam)) {
+                continue;
+            }
+            Map<String, Object> param = (Map<String, Object>) rawParam;
+            String name = asText(param.get("name"));
+            if (!StringUtils.hasText(name)) {
+                continue;
+            }
+            String sourceField = asText(param.get("value"));
+            Object value = StringUtils.hasText(sourceField) ? output.get(sourceField) : output.get(name);
+            if (value != null) {
+                output.put(name, value);
+            }
+        }
+    }
+
+    private String extractReferenceKey(String referenceNode) {
+        if (!StringUtils.hasText(referenceNode)) {
+            return null;
+        }
+        String[] parts = referenceNode.split("\\.");
+        return parts.length == 0 ? referenceNode : parts[parts.length - 1];
     }
 
     protected String stringData(WorkflowNode node, String field, String defaultValue) {

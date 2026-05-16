@@ -41,9 +41,16 @@ public class VideoGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
     @Override
     public Map<String, Object> execute(WorkflowNode node, Map<String, Object> input,
                                        Consumer<ExecutionEvent> progressCallback) throws Exception {
-        String prompt = textValue(node, input, "prompt", "input");
+        String prompt = configuredTextInput(node, input, "prompt");
+        if (prompt == null) {
+            prompt = textValue(node, input, "prompt", "input");
+        }
         if (prompt == null) {
             throw new IllegalArgumentException("视频生成节点缺少 prompt");
+        }
+        String referenceImageUrl = configuredTextInput(node, input, "referenceImageUrl");
+        if (referenceImageUrl == null) {
+            referenceImageUrl = stringData(node, "referenceImageUrl", null);
         }
 
         ResolvedAgentPlanConfig config = configResolver.resolve(node, "video");
@@ -53,7 +60,7 @@ public class VideoGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
         String taskId = agentPlanClient.createVideoTask(
                 config,
                 prompt,
-                stringData(node, "referenceImageUrl", null),
+                referenceImageUrl,
                 intData(node, "duration", 5),
                 stringData(node, "resolution", null),
                 stringData(node, "ratio", "adaptive"),
@@ -94,6 +101,7 @@ public class VideoGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
         output.put("model", config.model());
         output.put("metadata", task.get("raw"));
         output.put("output", persistedVideoUrl);
+        applyOutputParams(node, output);
         return output;
     }
 
