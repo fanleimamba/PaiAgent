@@ -37,6 +37,7 @@ class ConditionBranchRoutingTest {
 
         DAGParser dagParser = new DAGParser();
         ReflectionTestUtils.setField(engine, "dagParser", dagParser);
+        ReflectionTestUtils.setField(engine, "workflowConfigParser", new WorkflowConfigParser());
 
         // 注册执行器：模拟 LLM 节点解析输入 JSON 字符串为 Map
         List<NodeExecutor> executors = List.of(

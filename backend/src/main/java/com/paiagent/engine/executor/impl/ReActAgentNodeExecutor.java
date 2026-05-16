@@ -114,7 +114,15 @@ public class ReActAgentNodeExecutor extends AbstractLLMNodeExecutor {
             String toolName = decision.toolName();
             AgentTool tool = toolRegistry.getRequiredTool(toolName);
             Map<String, Object> toolInput = decision.toolInput();
-            Map<String, Object> observation = tool.execute(toolInput, toolContext);
+            Map<String, Object> observation;
+            try {
+                observation = tool.execute(toolInput, toolContext);
+            } catch (Exception toolError) {
+                log.warn("ReAct 工具调用失败: node={}, tool={}, error={}", node.getId(), toolName, toolError.getMessage());
+                observation = new LinkedHashMap<>();
+                observation.put("error", toolError.getMessage());
+                observation.put("recoverable", true);
+            }
 
             traceItem.put("toolName", toolName);
             traceItem.put("toolInput", toolInput);
@@ -287,16 +295,25 @@ public class ReActAgentNodeExecutor extends AbstractLLMNodeExecutor {
         if (value == null) {
             return List.of();
         }
+        List<String> toolNames;
         if (value instanceof List<?> list) {
-            return list.stream()
+            toolNames = list.stream()
                     .map(Object::toString)
                     .filter(toolName -> !toolName.isBlank())
                     .collect(Collectors.toList());
+        } else {
+            toolNames = List.of(value.toString().split(",")).stream()
+                    .map(String::trim)
+                    .filter(toolName -> !toolName.isBlank())
+                    .collect(Collectors.toList());
         }
-        return List.of(value.toString().split(",")).stream()
-                .map(String::trim)
-                .filter(toolName -> !toolName.isBlank())
-                .collect(Collectors.toList());
+
+        if (toolNames.contains("web_search") && !toolNames.contains("web_fetch")) {
+            List<String> expanded = new ArrayList<>(toolNames);
+            expanded.add("web_fetch");
+            return expanded;
+        }
+        return toolNames;
     }
 
     private void validateConfig(LLMNodeConfig config) {

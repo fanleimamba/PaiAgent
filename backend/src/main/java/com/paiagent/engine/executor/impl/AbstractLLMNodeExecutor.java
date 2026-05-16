@@ -9,7 +9,12 @@ import com.paiagent.engine.model.WorkflowNode;
 import com.paiagent.engine.skill.Skill;
 import com.paiagent.engine.skill.SkillRegistry;
 import com.paiagent.entity.LLMGlobalConfig;
+import com.paiagent.service.AgentMemoryService;
+import com.paiagent.service.AgentPlanConfigResolver;
+import com.paiagent.service.KnowledgeBaseService;
 import com.paiagent.service.LLMGlobalConfigService;
+import com.paiagent.service.ResolvedAgentPlanConfig;
+import com.paiagent.service.VolcengineAgentPlanClient;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.Message;
@@ -46,6 +51,18 @@ public abstract class AbstractLLMNodeExecutor implements NodeExecutor {
 
     @Autowired
     protected LLMGlobalConfigService llmGlobalConfigService;
+
+    @Autowired
+    protected AgentMemoryService agentMemoryService;
+
+    @Autowired
+    protected KnowledgeBaseService knowledgeBaseService;
+
+    @Autowired
+    protected AgentPlanConfigResolver agentPlanConfigResolver;
+
+    @Autowired
+    protected VolcengineAgentPlanClient agentPlanClient;
 
     /**
      * 最大函数调用迭代次数
@@ -107,6 +124,10 @@ public abstract class AbstractLLMNodeExecutor implements NodeExecutor {
                 config.getInputParams(),
                 input
         );
+        String contextPrompt = buildContextPrompt(node, userPrompt);
+        if (!contextPrompt.isBlank()) {
+            userPrompt = contextPrompt + "\n\n---\n\n用户任务:\n" + userPrompt;
+        }
         log.info("最终提示词: {}", userPrompt);
 
         // 5. 创建 ChatClient（带或不带 Functions）
@@ -161,6 +182,84 @@ public abstract class AbstractLLMNodeExecutor implements NodeExecutor {
         }
 
         return sb.toString();
+    }
+
+    private String buildContextPrompt(WorkflowNode node, String query) {
+        Map<String, Object> data = node.getData();
+        StringBuilder context = new StringBuilder();
+
+        if (Boolean.TRUE.equals(data.get("memoryEnabled"))) {
+            try {
+                int topK = intData(data, "memoryTopK", 5);
+                List<Double> embedding = List.of();
+                ResolvedAgentPlanConfig memoryConfig = agentPlanConfigResolver.resolve(node, "memory");
+                if (!isBlank(memoryConfig.apiUrl()) && !isBlank(memoryConfig.apiKey()) && !isBlank(memoryConfig.model())) {
+                    embedding = agentPlanClient.createEmbedding(memoryConfig, query);
+                }
+                Map<String, Object> memoryResult = agentMemoryService.retrieve(query, "workflow", List.of(), embedding, topK);
+                String memoryContext = textData(memoryResult.get("context"));
+                if (!memoryContext.isBlank()) {
+                    context.append("相关记忆:\n").append(memoryContext).append("\n\n");
+                }
+            } catch (Exception e) {
+                log.warn("{} 记忆召回失败: {}", getNodeType().toUpperCase(), e.getMessage());
+            }
+        }
+
+        String knowledgeBaseId = textData(data.get("knowledgeBaseId"));
+        if (!knowledgeBaseId.isBlank()) {
+            try {
+                int topK = intData(data, "knowledgeTopK", 5);
+                double threshold = doubleData(data, "knowledgeScoreThreshold", 0.2);
+                Map<String, Object> knowledgeResult = knowledgeBaseService.searchRuntime(knowledgeBaseId, query, topK, threshold);
+                String knowledgeContext = textData(knowledgeResult.get("context"));
+                if (!knowledgeContext.isBlank()) {
+                    context.append("知识库上下文:\n").append(knowledgeContext).append("\n\n");
+                }
+            } catch (Exception e) {
+                log.warn("{} 知识库召回失败: {}", getNodeType().toUpperCase(), e.getMessage());
+            }
+        }
+
+        if (context.isEmpty()) {
+            return "";
+        }
+        return "以下是可用于回答当前任务的上下文。若上下文与任务无关，请忽略；若相关，请优先依据上下文回答。\n\n"
+                + context.toString().trim();
+    }
+
+    private int intData(Map<String, Object> data, String key, int defaultValue) {
+        Object value = data.get(key);
+        if (value instanceof Number number) {
+            return number.intValue();
+        }
+        if (value instanceof String text && !text.isBlank()) {
+            try {
+                return Integer.parseInt(text.trim());
+            } catch (NumberFormatException ignored) {
+                return defaultValue;
+            }
+        }
+        return defaultValue;
+    }
+
+    private double doubleData(Map<String, Object> data, String key, double defaultValue) {
+        Object value = data.get(key);
+        if (value instanceof Number number) {
+            return number.doubleValue();
+        }
+        if (value instanceof String text && !text.isBlank()) {
+            try {
+                return Double.parseDouble(text.trim());
+            } catch (NumberFormatException ignored) {
+                return defaultValue;
+            }
+        }
+        return defaultValue;
+    }
+
+    private String textData(Object value) {
+        return value == null ? "" : String.valueOf(value).trim();
     }
 
     /**
@@ -336,9 +435,6 @@ public abstract class AbstractLLMNodeExecutor implements NodeExecutor {
                 config.setApiUrl(globalConfig.getApiUrl());
                 config.setApiKey(globalConfig.getApiKey());
                 config.setModel(globalConfig.getModel());
-                config.setTemperature(globalConfig.getTemperature() != null
-                        ? globalConfig.getTemperature().doubleValue()
-                        : 0.7);
                 config.setProvider(canonicalizeProvider(trimString(globalConfig.getProvider())));
                 log.info("{} 使用全局配置: {}", config.getProvider().toUpperCase(Locale.ROOT), globalConfig.getConfigName());
             } else {
@@ -350,6 +446,7 @@ public abstract class AbstractLLMNodeExecutor implements NodeExecutor {
         }
 
         config.setConfigId(configId);
+        config.setTemperature(resolveNodeTemperature(data));
         if (isBlank(config.getProvider())) {
             config.setProvider(resolveProvider(node, data));
         }
@@ -367,9 +464,13 @@ public abstract class AbstractLLMNodeExecutor implements NodeExecutor {
         config.setApiUrl(trimString(data.get("apiUrl")));
         config.setApiKey(trimString(data.get("apiKey")));
         config.setModel(trimString(data.get("model")));
-        config.setTemperature(data.get("temperature") != null
+        config.setTemperature(resolveNodeTemperature(data));
+    }
+
+    private double resolveNodeTemperature(Map<String, Object> data) {
+        return data.get("temperature") != null
                 ? ((Number) data.get("temperature")).doubleValue()
-                : 0.7);
+                : 0.7;
     }
 
     private void validateResolvedConfig(LLMNodeConfig config) {
@@ -408,6 +509,7 @@ public abstract class AbstractLLMNodeExecutor implements NodeExecutor {
             case "通义千问" -> "qwen";
             case "智谱" -> "zhipu";
             case "ai ping" -> "ai_ping";
+            case "volcengine", "ark", "agent_plan", "agent plan", "火山方舟" -> "volcengine_agent_plan";
             default -> normalized;
         };
     }

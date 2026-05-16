@@ -25,6 +25,9 @@ public class WorkflowEngine implements WorkflowExecutor {
     
     @Autowired
     private DAGParser dagParser;
+
+    @Autowired
+    private WorkflowConfigParser workflowConfigParser;
     
     @Autowired
     private NodeExecutorFactory executorFactory;
@@ -41,7 +44,7 @@ public class WorkflowEngine implements WorkflowExecutor {
     public ExecutionResponse executeWithCallback(Workflow workflow, String inputData, Consumer<ExecutionEvent> eventCallback) {
         long startTime = System.currentTimeMillis();
         
-        WorkflowConfig config = JSON.parseObject(workflow.getFlowData(), WorkflowConfig.class);
+        WorkflowConfig config = workflowConfigParser.parse(workflow.getFlowData());
         List<WorkflowNode> sortedNodes = dagParser.parse(config);
         List<WorkflowEdge> edges = config.getEdges() != null ? config.getEdges() : new ArrayList<>();
         

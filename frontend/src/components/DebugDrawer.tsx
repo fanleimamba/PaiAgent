@@ -71,6 +71,86 @@ const getFriendlyOutputText = (value: unknown): string | null => {
   return null;
 };
 
+const truncateText = (value: unknown, maxLength = 180) => {
+  const text = typeof value === 'string' ? value : JSON.stringify(value);
+  if (!text) return '';
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+};
+
+const getToolTrace = (value: unknown): Record<string, unknown>[] => {
+  const normalized = normalizeValue(value);
+  const record = isRecord(normalized) && isRecord(normalized.output)
+    ? normalized.output
+    : normalized;
+
+  if (!isRecord(record) || !Array.isArray(record.toolTrace)) {
+    return [];
+  }
+
+  return record.toolTrace.filter((item): item is Record<string, unknown> => isRecord(item));
+};
+
+const summarizeToolInput = (toolInput: unknown) => {
+  if (!isRecord(toolInput)) {
+    return truncateText(toolInput, 120);
+  }
+
+  const query = typeof toolInput.query === 'string' ? toolInput.query : '';
+  if (query) {
+    return `query="${truncateText(query, 120)}"`;
+  }
+
+  const urls = Array.isArray(toolInput.urls) ? toolInput.urls : undefined;
+  if (urls && urls.length > 0) {
+    return `urls=${urls.length}`;
+  }
+
+  return truncateText(toolInput, 120);
+};
+
+const summarizeObservation = (observation: unknown) => {
+  if (!isRecord(observation)) {
+    return truncateText(observation, 160);
+  }
+
+  if (typeof observation.error === 'string') {
+    return `失败: ${truncateText(observation.error, 160)}`;
+  }
+
+  const summary = typeof observation.summary === 'string'
+    ? observation.summary
+    : typeof observation.content === 'string'
+      ? observation.content
+      : '';
+  const citations = Array.isArray(observation.citations) ? observation.citations.length : 0;
+  const results = Array.isArray(observation.results) ? observation.results.length : 0;
+  const parts = [
+    summary ? `结果="${truncateText(summary, 120)}"` : '',
+    results > 0 ? `results=${results}` : '',
+    citations > 0 ? `citations=${citations}` : '',
+  ].filter(Boolean);
+
+  return parts.join('；') || truncateText(observation, 160);
+};
+
+const formatToolTraceLog = (traceItem: Record<string, unknown>) => {
+  const toolName = typeof traceItem.toolName === 'string' ? traceItem.toolName : '';
+  if (!toolName) {
+    return null;
+  }
+
+  const step = typeof traceItem.step === 'number' ? `#${traceItem.step}` : '';
+  const inputSummary = summarizeToolInput(traceItem.toolInput);
+  const observationSummary = summarizeObservation(traceItem.observation);
+  return `🔎 ReAct 工具调用${step ? ` ${step}` : ''}: ${toolName}${inputSummary ? ` | ${inputSummary}` : ''}${observationSummary ? ` | ${observationSummary}` : ''}`;
+};
+
+const formatToolTraceLogs = (output: unknown) => (
+  getToolTrace(output)
+    .map(formatToolTraceLog)
+    .filter((log): log is string => Boolean(log))
+);
+
 const formatDuration = (milliseconds: number | string | undefined | null) => {
   const ms = typeof milliseconds === 'string'
     ? Number.parseInt(milliseconds, 10)
@@ -117,6 +197,53 @@ const DebugValue = ({ value, preferOutputText = false }: { value: unknown; prefe
       {JSON.stringify(value, null, 2)}
     </pre>
   );
+};
+
+const RichOutput = ({ value, preferOutputText = false }: { value: unknown; preferOutputText?: boolean }) => {
+  const normalized = normalizeValue(value);
+  const record = isRecord(normalized) && isRecord(normalized.output)
+    ? normalized.output
+    : normalized;
+
+  if (isRecord(record)) {
+    const imageUrls = Array.isArray(record.imageUrls)
+      ? record.imageUrls.filter((url): url is string => typeof url === 'string')
+      : (typeof record.imageUrl === 'string' ? [record.imageUrl] : []);
+    const videoUrl = typeof record.videoUrl === 'string' ? record.videoUrl : null;
+    const summary = typeof record.summary === 'string' ? record.summary : null;
+    const context = typeof record.context === 'string' ? record.context : null;
+    const citations = Array.isArray(record.citations) ? record.citations : [];
+
+    if (imageUrls.length > 0 || videoUrl || summary || context || citations.length > 0) {
+      return (
+        <div className="space-y-3">
+          {imageUrls.length > 0 && (
+            <div className="debug-media-grid">
+              {imageUrls.map((url) => (
+                <img key={url} src={url} alt="generated" className="debug-generated-image" />
+              ))}
+            </div>
+          )}
+          {videoUrl && (
+            <video src={videoUrl} controls className="debug-generated-video" />
+          )}
+          {(summary || context) && (
+            <DebugValue value={summary || context} preferOutputText />
+          )}
+          {citations.length > 0 && (
+            <div className="debug-citation-list">
+              {citations.map((citation, index) => (
+                <Tag key={`${String(citation)}-${index}`}>{String(citation)}</Tag>
+              ))}
+            </div>
+          )}
+          <DebugValue value={record} preferOutputText={preferOutputText} />
+        </div>
+      );
+    }
+  }
+
+  return <DebugValue value={value} preferOutputText={preferOutputText} />;
 };
 
 const DebugDrawer = ({ open, onClose }: DebugDrawerProps) => {
@@ -175,16 +302,32 @@ const DebugDrawer = ({ open, onClose }: DebugDrawerProps) => {
 
     const restoredLogs = [
       `已加载最近一次执行记录 #${result.executionId}`,
-      ...restoredNodeResults.map((node) => {
-        if (node.status === 'FAILED') {
-          return `❌ 节点 [${node.nodeName}] 执行失败${node.error ? `: ${node.error}` : ''}`;
-        }
-        return `✅ 节点 [${node.nodeName}] 执行成功,耗时 ${formatDuration(node.duration)}`;
+      ...restoredNodeResults.flatMap((node) => {
+        const nodeLog = node.status === 'FAILED'
+          ? `❌ 节点 [${node.nodeName}] 执行失败${node.error ? `: ${node.error}` : ''}`
+          : `✅ 节点 [${node.nodeName}] 执行成功,耗时 ${formatDuration(node.duration)}`;
+        const toolLogs = formatToolTraceLogs(node.output);
+        return [nodeLog, ...toolLogs];
       }),
       `${result.status === 'SUCCESS' ? '✅' : '❌'} 工作流执行${result.status === 'SUCCESS' ? '成功' : '失败'},总耗时 ${formatDuration(result.duration)}`,
     ];
 
     setLogs(restoredLogs.map((message) => `[历史] ${message}`));
+  };
+
+  const addProgressLog = (event: ExecutionEvent) => {
+    addLog(`📊 ${event.message}`);
+    if (isRecord(event.data)) {
+      const toolTraceLog = formatToolTraceLog(event.data);
+      if (toolTraceLog) {
+        addLog(toolTraceLog);
+      }
+    }
+  };
+
+  const addNodeSuccessLog = (node: NodeResult) => {
+    addLog(`✅ 节点 [${node.nodeName}] 执行成功,耗时 ${formatDuration(node.duration)}`);
+    formatToolTraceLogs(node.output).forEach(addLog);
   };
 
   const loadLatestExecution = async () => {
@@ -265,7 +408,6 @@ const DebugDrawer = ({ open, onClose }: DebugDrawerProps) => {
             case 'NODE_SUCCESS':
               if (event.nodeId && event.nodeName) {
                 const duration = event.message?.match(/耗时 (\d+)ms/)?.[1] || '0';
-                addLog(`✅ 节点 [${event.nodeName}] 执行成功,耗时 ${formatDuration(duration)}`);
                 
                 const eventData = isRecord(event.data) ? event.data : {};
                 const nodeResult: NodeResult = {
@@ -276,6 +418,7 @@ const DebugDrawer = ({ open, onClose }: DebugDrawerProps) => {
                   output: isRecord(eventData.output) ? eventData.output : isRecord(event.data) ? event.data : {},
                   duration: parseInt(duration)
                 };
+                addNodeSuccessLog(nodeResult);
                 tempNodeStatusMap.set(event.nodeId, nodeResult);
                 nodeResults.push(nodeResult);
                 setNodeStatusMap(new Map(tempNodeStatusMap));
@@ -284,7 +427,7 @@ const DebugDrawer = ({ open, onClose }: DebugDrawerProps) => {
               
             case 'NODE_PROGRESS':
               if (event.nodeId && event.message) {
-                addLog(`📊 ${event.message}`);
+                addProgressLog(event);
                 const existingNode = tempNodeStatusMap.get(event.nodeId);
                 if (existingNode) {
                   existingNode.status = 'RUNNING';
@@ -329,9 +472,6 @@ const DebugDrawer = ({ open, onClose }: DebugDrawerProps) => {
         },
         () => {
           setExecuting(false);
-          window.setTimeout(() => {
-            loadLatestExecution();
-          }, 600);
         },
         (error: Error) => {
           const errorMsg = error.message.includes('连接失败') 
@@ -393,7 +533,7 @@ const DebugDrawer = ({ open, onClose }: DebugDrawerProps) => {
           </div>
           <div>
             <div className="debug-field-label">输出数据</div>
-            <DebugValue value={nodeResult.output} preferOutputText />
+            <RichOutput value={nodeResult.output} preferOutputText />
           </div>
           {nodeResult.error && (
             <Alert message="错误信息" description={nodeResult.error} type="error" showIcon />
@@ -555,7 +695,7 @@ const DebugDrawer = ({ open, onClose }: DebugDrawerProps) => {
                 }
                 
                 return (
-                  <DebugValue value={executionResult.outputData} preferOutputText />
+                  <RichOutput value={executionResult.outputData} preferOutputText />
                 );
               })()}
             </div>

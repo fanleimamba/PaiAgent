@@ -136,7 +136,7 @@ const NodePanel = ({ onDragStart }: NodePanelProps) => {
         ) : (
           <>
             <Collapse
-              defaultActiveKey={['llm', 'tool', 'control']}
+	              defaultActiveKey={['llm', 'tool', 'control']}
               ghost
               items={items}
               bordered={false}

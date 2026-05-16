@@ -121,6 +121,10 @@ public class LLMGlobalConfigService extends ServiceImpl<LLMGlobalConfigMapper, L
         config.setApiKey(trimToNull(config.getApiKey()));
         config.setModel(trimToNull(config.getModel()));
         config.setTtsModel(trimToNull(config.getTtsModel()));
+        config.setEmbeddingModel(trimToNull(config.getEmbeddingModel()));
+        config.setImageModel(trimToNull(config.getImageModel()));
+        config.setVideoModel(trimToNull(config.getVideoModel()));
+        config.setMemoryEnabled(config.getMemoryEnabled() != null && config.getMemoryEnabled() == 1 ? 1 : 0);
     }
 
     private void validateConfig(LLMGlobalConfig config) {
@@ -211,6 +215,7 @@ public class LLMGlobalConfigService extends ServiceImpl<LLMGlobalConfigMapper, L
             case "stepfun", "阶跃星辰" -> "step";
             case "ai ping" -> "ai_ping";
             case "智谱" -> "zhipu";
+            case "volcengine", "ark", "agent_plan", "agent plan", "火山方舟" -> "volcengine_agent_plan";
             default -> provider;
         };
     }

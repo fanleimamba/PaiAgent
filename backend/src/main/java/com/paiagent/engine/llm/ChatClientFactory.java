@@ -58,7 +58,7 @@ public class ChatClientFactory {
                 normalizedProvider, apiUrl, model, temperature, functions.size());
 
         ChatModel chatModel = switch (normalizedProvider) {
-            case "openai", "deepseek", "qwen", "step", "zhipu", "ai_ping" ->
+            case "openai", "deepseek", "qwen", "step", "zhipu", "ai_ping", "volcengine_agent_plan" ->
                     createOpenAICompatibleModel(apiUrl, apiKey, model, temperature);
             default -> throw new IllegalArgumentException("不支持的提供商类型: " + provider);
         };
@@ -139,6 +139,7 @@ public class ChatClientFactory {
             case "stepfun", "阶跃星辰" -> "step";
             case "智谱" -> "zhipu";
             case "ai ping" -> "ai_ping";
+            case "volcengine", "ark", "agent_plan", "agent plan", "火山方舟" -> "volcengine_agent_plan";
             default -> normalized;
         };
     }

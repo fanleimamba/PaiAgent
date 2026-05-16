@@ -3,6 +3,7 @@ package com.paiagent.engine.langgraph;
 import com.alibaba.fastjson2.JSON;
 import com.paiagent.dto.ExecutionEvent;
 import com.paiagent.dto.ExecutionResponse;
+import com.paiagent.engine.WorkflowConfigParser;
 import com.paiagent.engine.WorkflowExecutor;
 import com.paiagent.engine.langgraph.builder.GraphBuilder;
 import com.paiagent.engine.langgraph.state.StateManager;
@@ -39,6 +40,9 @@ public class LangGraphWorkflowEngine implements WorkflowExecutor {
     
     @Autowired
     private ExecutionRecordMapper executionRecordMapper;
+
+    @Autowired
+    private WorkflowConfigParser workflowConfigParser;
     
     @Override
     public ExecutionResponse execute(Workflow workflow, String inputData) {
@@ -64,7 +68,7 @@ public class LangGraphWorkflowEngine implements WorkflowExecutor {
             }
             
             // 1. 解析工作流配置
-            WorkflowConfig config = JSON.parseObject(workflow.getFlowData(), WorkflowConfig.class);
+            WorkflowConfig config = workflowConfigParser.parse(workflow.getFlowData());
             log.info("工作流配置解析完成: 节点数={}, 边数={}", 
                 config.getNodes().size(), config.getEdges().size());
             

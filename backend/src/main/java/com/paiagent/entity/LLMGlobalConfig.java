@@ -49,6 +49,26 @@ public class LLMGlobalConfig {
     private String ttsModel;
 
     /**
+     * 默认向量模型
+     */
+    private String embeddingModel;
+
+    /**
+     * 默认图片生成模型
+     */
+    private String imageModel;
+
+    /**
+     * 默认视频生成模型
+     */
+    private String videoModel;
+
+    /**
+     * 是否启用 Agent Plan 记忆能力
+     */
+    private Integer memoryEnabled;
+
+    /**
      * 默认温度
      */
     private BigDecimal temperature;

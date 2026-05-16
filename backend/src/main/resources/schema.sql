@@ -106,6 +106,10 @@ CREATE TABLE IF NOT EXISTS llm_global_config (
     api_key TEXT NOT NULL COMMENT 'API密钥',
     model VARCHAR(100) NOT NULL COMMENT '默认LLM模型',
     tts_model VARCHAR(100) DEFAULT NULL COMMENT '默认TTS模型',
+    embedding_model VARCHAR(100) DEFAULT NULL COMMENT '默认向量模型',
+    image_model VARCHAR(100) DEFAULT NULL COMMENT '默认图片生成模型',
+    video_model VARCHAR(100) DEFAULT NULL COMMENT '默认视频生成模型',
+    memory_enabled TINYINT DEFAULT 0 COMMENT '是否启用Agent Plan记忆能力',
     temperature DECIMAL(3,2) DEFAULT 0.7 COMMENT '默认温度',
     is_default TINYINT DEFAULT 0 COMMENT '是否默认配置(0-否,1-是)',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
@@ -115,3 +119,119 @@ CREATE TABLE IF NOT EXISTS llm_global_config (
     INDEX idx_provider (provider),
     INDEX idx_is_default (is_default)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='全局模型配置表';
+
+-- Agent 记忆表（MVP 持久化结构，执行器第一版可先通过服务层封装使用）
+CREATE TABLE IF NOT EXISTS agent_memory (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '记忆主键 ID',
+    scope VARCHAR(50) NOT NULL DEFAULT 'workflow' COMMENT '记忆范围(workflow/user/global)',
+    memory_type VARCHAR(50) DEFAULT 'fact' COMMENT '记忆类型',
+    content TEXT NOT NULL COMMENT '记忆内容',
+    tags VARCHAR(500) DEFAULT NULL COMMENT '标签',
+    source VARCHAR(255) COMMENT '来源',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    deleted TINYINT DEFAULT 0 COMMENT '逻辑删除标识',
+    INDEX idx_scope (scope),
+    INDEX idx_memory_type (memory_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Agent长期记忆表';
+
+CREATE TABLE IF NOT EXISTS agent_memory_embedding (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '记忆向量主键 ID',
+    memory_id BIGINT NOT NULL COMMENT '记忆 ID',
+    model VARCHAR(100) NOT NULL COMMENT '向量模型',
+    dimension INT DEFAULT NULL COMMENT '向量维度',
+    embedding JSON COMMENT '向量数据',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    INDEX idx_memory_id (memory_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='Agent记忆向量表';
+
+CREATE TABLE IF NOT EXISTS mcp_tool_config (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT 'MCP 工具配置 ID',
+    name VARCHAR(100) NOT NULL COMMENT '名称',
+    description VARCHAR(500) DEFAULT NULL COMMENT '描述',
+    tool_type VARCHAR(50) DEFAULT 'custom' COMMENT '工具类型',
+    tool_name VARCHAR(100) NOT NULL COMMENT '暴露给 Agent 的工具名',
+    transport VARCHAR(30) DEFAULT 'stdio' COMMENT '传输方式',
+    command VARCHAR(500) NOT NULL COMMENT '启动命令',
+    args JSON COMMENT '启动参数',
+    env JSON COMMENT '环境变量',
+    enabled TINYINT DEFAULT 1 COMMENT '是否启用',
+    preset TINYINT DEFAULT 0 COMMENT '是否预设',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    deleted TINYINT DEFAULT 0 COMMENT '逻辑删除标识',
+    INDEX idx_mcp_tool_name (tool_name),
+    INDEX idx_mcp_tool_type (tool_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='MCP工具配置表';
+
+CREATE TABLE IF NOT EXISTS knowledge_base (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '知识库 ID',
+    name VARCHAR(100) NOT NULL COMMENT '知识库名称',
+    description VARCHAR(500) DEFAULT NULL COMMENT '知识库描述',
+    config_id BIGINT DEFAULT NULL COMMENT 'Agent Plan 全局配置 ID',
+    embedding_model VARCHAR(100) DEFAULT NULL COMMENT '向量模型',
+    chunk_size INT DEFAULT 800 COMMENT '分片长度',
+    chunk_overlap INT DEFAULT 100 COMMENT '分片重叠长度',
+    status VARCHAR(30) DEFAULT 'DRAFT' COMMENT '状态',
+    document_count INT DEFAULT 0 COMMENT '文档数',
+    chunk_count INT DEFAULT 0 COMMENT '分片数',
+    char_count BIGINT DEFAULT 0 COMMENT '字符数',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    deleted TINYINT DEFAULT 0 COMMENT '逻辑删除标识',
+    INDEX idx_knowledge_base_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识库表';
+
+CREATE TABLE IF NOT EXISTS knowledge_document (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '知识文档 ID',
+    knowledge_base_id BIGINT NOT NULL COMMENT '知识库 ID',
+    title VARCHAR(255) DEFAULT NULL COMMENT '文档标题',
+    source_type VARCHAR(30) DEFAULT 'TEXT' COMMENT '来源类型',
+    source_url VARCHAR(1024) DEFAULT NULL COMMENT '来源 URL',
+    file_name VARCHAR(255) DEFAULT NULL COMMENT '文件名',
+    raw_text MEDIUMTEXT COMMENT '原始文本',
+    tags JSON COMMENT '标签',
+    status VARCHAR(30) DEFAULT 'IMPORTED' COMMENT '状态',
+    char_count BIGINT DEFAULT 0 COMMENT '字符数',
+    error_message TEXT COMMENT '错误信息',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    deleted TINYINT DEFAULT 0 COMMENT '逻辑删除标识',
+    INDEX idx_knowledge_document_base (knowledge_base_id),
+    INDEX idx_knowledge_document_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识库文档表';
+
+CREATE TABLE IF NOT EXISTS knowledge_chunk (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '知识片段主键 ID',
+    knowledge_base_id BIGINT NOT NULL COMMENT '知识库 ID',
+    document_id BIGINT DEFAULT NULL COMMENT '知识文档 ID',
+    chunk_index INT DEFAULT 0 COMMENT '分片序号',
+    title VARCHAR(255) DEFAULT NULL COMMENT '标题',
+    content TEXT NOT NULL COMMENT '片段内容',
+    source_url VARCHAR(1024) DEFAULT NULL COMMENT '来源 URL',
+    tags JSON COMMENT '标签',
+    embedding_model VARCHAR(100) DEFAULT NULL COMMENT '向量模型',
+    embedding JSON COMMENT '向量数据',
+    status VARCHAR(30) DEFAULT 'READY' COMMENT '状态',
+    char_count INT DEFAULT 0 COMMENT '字符数',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    deleted TINYINT DEFAULT 0 COMMENT '逻辑删除标识',
+    INDEX idx_knowledge_base_id (knowledge_base_id),
+    INDEX idx_knowledge_document_id (document_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识库片段表';
+
+CREATE TABLE IF NOT EXISTS knowledge_index_task (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '索引任务 ID',
+    knowledge_base_id BIGINT NOT NULL COMMENT '知识库 ID',
+    document_id BIGINT NOT NULL COMMENT '文档 ID',
+    status VARCHAR(30) DEFAULT 'RUNNING' COMMENT '状态',
+    progress INT DEFAULT 0 COMMENT '进度',
+    total_chunks INT DEFAULT 0 COMMENT '总分片数',
+    finished_chunks INT DEFAULT 0 COMMENT '完成分片数',
+    error_message TEXT COMMENT '错误信息',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
+    deleted TINYINT DEFAULT 0 COMMENT '逻辑删除标识',
+    INDEX idx_knowledge_index_task_base (knowledge_base_id),
+    INDEX idx_knowledge_index_task_document (document_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci COMMENT='知识库索引任务表';

@@ -12,6 +12,11 @@ const PROVIDER_ALIASES: Record<string, string> = {
   '智谱': 'zhipu',
   ai_ping: 'ai_ping',
   'ai ping': 'ai_ping',
+  volcengine: 'volcengine_agent_plan',
+  ark: 'volcengine_agent_plan',
+  agent_plan: 'volcengine_agent_plan',
+  'agent plan': 'volcengine_agent_plan',
+  '火山方舟': 'volcengine_agent_plan',
 };
 
 const PROVIDER_LABELS: Record<string, string> = {
@@ -21,6 +26,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   step: '阶跃星辰',
   zhipu: '智谱',
   ai_ping: 'AI Ping',
+  volcengine_agent_plan: '火山方舟 Agent Plan',
 };
 
 export const SUPPORTED_LLM_PROVIDERS = [
@@ -30,6 +36,7 @@ export const SUPPORTED_LLM_PROVIDERS = [
   'step',
   'zhipu',
   'ai_ping',
+  'volcengine_agent_plan',
 ] as const;
 
 export const normalizeProviderKey = (provider?: string | null) => {

@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { Button, Input, Form, message, Checkbox, Select, Modal, List } from 'antd';
-import { SaveOutlined, FolderOpenOutlined, BugOutlined, LogoutOutlined, PlusOutlined, DeleteOutlined } from '@ant-design/icons';
+import { SaveOutlined, FolderOpenOutlined, BugOutlined, LogoutOutlined, PlusOutlined, DeleteOutlined, DatabaseOutlined, ApiOutlined } from '@ant-design/icons';
 import { Edge, MarkerType, Node } from '@xyflow/react';
 import NodePanel from '../components/NodePanel';
 import FlowCanvas from '../components/FlowCanvas';
@@ -12,6 +12,8 @@ import { useWorkflowStore } from '../store/workflowStore';
 import { useAuthStore } from '../store/authStore';
 import { useLLMConfigStore } from '../store/llmConfigStore';
 import { createWorkflow, updateWorkflow, executeWorkflow, getWorkflows, getWorkflow, Workflow } from '../api/workflow';
+import { getKnowledgeBases, KnowledgeBase } from '../api/knowledge';
+import { getMcpTools, McpToolConfig } from '../api/mcpTools';
 import { getRefreshToken } from '../utils/auth';
 import {
   getProviderFromNodeType,
@@ -60,6 +62,33 @@ interface WorkflowCanvasData {
   edges?: Edge[];
 }
 
+const normalizeAgentToolSelection = (tools: string[]) => {
+  const normalized = new Set<string>();
+  tools.forEach((tool) => {
+    if (tool === 'memory_retrieve') return;
+    if (tool === 'web_search' || tool === 'web_fetch') return;
+    normalized.add(tool);
+  });
+  return Array.from(normalized);
+};
+
+const expandAgentToolSelection = (tools: string[]) => {
+  const expanded = new Set<string>();
+  tools.forEach((tool) => {
+    if (tool === 'memory_retrieve') return;
+    expanded.add(tool);
+    if (tool === 'web_search') {
+      expanded.add('web_fetch');
+    }
+  });
+  return Array.from(expanded);
+};
+
+const normalizeStringArray = (value: unknown) => {
+  if (!Array.isArray(value)) return [];
+  return value.map(String).filter(Boolean);
+};
+
 /**
  * 工作流编辑器页面
  */
@@ -77,6 +106,8 @@ const EditorPage = () => {
   const [loadModalOpen, setLoadModalOpen] = useState(false);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [loadingWorkflows, setLoadingWorkflows] = useState(false);
+  const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
+  const [mcpTools, setMcpTools] = useState<McpToolConfig[]>([]);
   const hasLoadedRef = useRef<number | null>(null);
   
   // LLM 节点配置状态
@@ -89,7 +120,15 @@ const EditorPage = () => {
     temperature: 0.7,
     prompt: '',
     skillName: '',
-    maxSteps: 5
+    maxSteps: 5,
+    agentStrategy: 'none',
+    tools: [] as string[],
+    memoryEnabled: false,
+    memoryTopK: 5,
+    mcpToolIds: [] as string[],
+    knowledgeBaseId: undefined as string | undefined,
+    knowledgeTopK: 5,
+    knowledgeScoreThreshold: 0.2
   });
   const [llmInputParams, setLlmInputParams] = useState<LlmInputParam[]>([]);
   const [llmOutputParams, setLlmOutputParams] = useState<LlmOutputParam[]>([]);
@@ -97,6 +136,21 @@ const EditorPage = () => {
   // LLM 全局配置 Store
   const { configs: llmGlobalConfigs, fetchAllConfigs: fetchLLMGlobalConfigs } = useLLMConfigStore();
   const providerOptions = getSupportedProviderOptions();
+
+  const buildRuntimeToolSelection = (tools: string[], mcpToolIds: string[]) => {
+    const selected = new Set(expandAgentToolSelection(tools));
+    mcpTools
+      .filter((tool) => mcpToolIds.includes(String(tool.id)))
+      .forEach((tool) => {
+        if (tool.toolName) {
+          selected.add(tool.toolName);
+        }
+        if (tool.toolName === 'web_search') {
+          selected.add('web_fetch');
+        }
+      });
+    return Array.from(selected);
+  };
 
   // TTS 节点配置状态
   const [ttsConfig, setTtsConfig] = useState({
@@ -171,10 +225,20 @@ const EditorPage = () => {
         apiUrl: matchedGlobalConfig?.apiUrl || (node.data?.apiUrl as string) || '',
         apiKey: configId ? '' : (node.data?.apiKey as string) || '',
         model: matchedGlobalConfig?.model || (node.data?.model as string) || '',
-        temperature: matchedGlobalConfig?.temperature || (node.data?.temperature as number) || 0.7,
+        temperature: (node.data?.temperature as number) || 0.7,
         prompt: (node.data?.prompt as string) || '',
         skillName: (node.data?.skillName as string) || '',
-        maxSteps: (node.data?.maxSteps as number) || 5
+        maxSteps: (node.data?.maxSteps as number) || 5,
+        agentStrategy: (node.data?.agentStrategy as string) || (node.data?.type === 'react_agent' ? 'react' : 'none'),
+        tools: normalizeAgentToolSelection(
+          Array.isArray(node.data?.tools) ? node.data.tools as string[] : []
+        ),
+        memoryEnabled: Boolean(node.data?.memoryEnabled),
+        memoryTopK: (node.data?.memoryTopK as number) || 5,
+        mcpToolIds: normalizeStringArray(node.data?.mcpToolIds),
+        knowledgeBaseId: (node.data?.knowledgeBaseId as string) || undefined,
+        knowledgeTopK: (node.data?.knowledgeTopK as number) || 5,
+        knowledgeScoreThreshold: (node.data?.knowledgeScoreThreshold as number) || 0.2
       });
       setLlmInputParams((node.data?.inputParams as LlmInputParam[]) || []);
       setLlmOutputParams((node.data?.outputParams as LlmOutputParam[]) || []);
@@ -212,6 +276,30 @@ const EditorPage = () => {
     fetchLLMGlobalConfigs();
   }, [fetchLLMGlobalConfigs]);
 
+  useEffect(() => {
+    getKnowledgeBases()
+      .then((result) => {
+        if (result.code === 200) {
+          setKnowledgeBases(result.data);
+        }
+      })
+      .catch(() => {
+        setKnowledgeBases([]);
+      });
+  }, []);
+
+  useEffect(() => {
+    getMcpTools()
+      .then((result) => {
+        if (result.code === 200) {
+          setMcpTools(result.data);
+        }
+      })
+      .catch(() => {
+        setMcpTools([]);
+      });
+  }, []);
+
   // 当全局配置异步加载完成后，补齐当前选中节点的展示配置
   useEffect(() => {
     if (!selectedNode) return;
@@ -225,7 +313,6 @@ const EditorPage = () => {
     const needsSync =
       llmConfig.apiUrl !== config.apiUrl ||
       llmConfig.model !== config.model ||
-      llmConfig.temperature !== config.temperature ||
       llmConfig.apiKey !== '';
 
     if (needsSync) {
@@ -234,8 +321,7 @@ const EditorPage = () => {
         provider: normalizeProviderKey(config.provider),
         apiUrl: config.apiUrl,
         apiKey: '',
-        model: config.model,
-        temperature: config.temperature
+        model: config.model
       }));
     }
   }, [llmGlobalConfigs, selectedNode, llmConfig]);
@@ -454,6 +540,22 @@ const EditorPage = () => {
           : ['output', 'tokens'];
       case 'tts':
         return ['audioUrl', 'fileName', 'output'];
+      case 'web_search':
+        return ['summary', 'results', 'citations', 'output'];
+      case 'web_fetch':
+        return ['content', 'pages', 'citations', 'output'];
+      case 'memory_write':
+        return ['memoryId', 'scope', 'stored'];
+      case 'memory_retrieve':
+        return ['context', 'memories', 'citations', 'output'];
+      case 'knowledge_upsert':
+        return ['knowledgeBaseId', 'contentId', 'chunkCount', 'indexed', 'output'];
+      case 'knowledge_retrieve':
+        return ['context', 'chunks', 'citations', 'output'];
+      case 'image_generate':
+        return ['imageUrl', 'imageUrls', 'prompt', 'output'];
+      case 'video_generate':
+        return ['videoUrl', 'coverUrl', 'taskId', 'status', 'output'];
       default:
         return ['output'];
     }
@@ -632,6 +734,7 @@ const EditorPage = () => {
     }
 
     const useGlobalConfig = !!llmConfig.configId;
+    const nextAgentStrategy = selectedNode.data?.type === 'react_agent' ? 'react' : llmConfig.agentStrategy;
     const updatedData = {
       ...selectedNode.data,
       provider: llmConfig.provider,
@@ -639,10 +742,18 @@ const EditorPage = () => {
       apiUrl: useGlobalConfig ? '' : llmConfig.apiUrl,
       apiKey: useGlobalConfig ? '' : llmConfig.apiKey,
       model: useGlobalConfig ? '' : llmConfig.model,
-      temperature: useGlobalConfig ? 0.7 : llmConfig.temperature,
+      temperature: llmConfig.temperature,
       prompt: llmConfig.prompt,
       skillName: llmConfig.skillName,
       maxSteps: llmConfig.maxSteps,
+      agentStrategy: nextAgentStrategy,
+      tools: nextAgentStrategy === 'react' ? buildRuntimeToolSelection(llmConfig.tools, llmConfig.mcpToolIds) : [],
+      memoryEnabled: llmConfig.memoryEnabled,
+      memoryTopK: llmConfig.memoryTopK,
+      mcpToolIds: nextAgentStrategy === 'react' ? llmConfig.mcpToolIds : [],
+      knowledgeBaseId: llmConfig.knowledgeBaseId,
+      knowledgeTopK: llmConfig.knowledgeTopK,
+      knowledgeScoreThreshold: llmConfig.knowledgeScoreThreshold,
       inputParams: llmInputParams,
       outputParams: llmOutputParams
     };
@@ -858,6 +969,7 @@ const EditorPage = () => {
       if (!hasBasicConfig && !hasParams) return; // 没有任何配置，不保存
 
       const useGlobalConfig = !!llmConfig.configId;
+      const nextAgentStrategy = selectedNode.data?.type === 'react_agent' ? 'react' : llmConfig.agentStrategy;
       const updatedData = {
         ...selectedNode.data,
         provider: llmConfig.provider,
@@ -865,10 +977,18 @@ const EditorPage = () => {
         apiUrl: useGlobalConfig ? '' : llmConfig.apiUrl,
         apiKey: useGlobalConfig ? '' : llmConfig.apiKey,
         model: useGlobalConfig ? '' : llmConfig.model,
-        temperature: useGlobalConfig ? 0.7 : llmConfig.temperature,
+        temperature: llmConfig.temperature,
         prompt: llmConfig.prompt,
         skillName: llmConfig.skillName,
         maxSteps: llmConfig.maxSteps,
+        agentStrategy: nextAgentStrategy,
+        tools: nextAgentStrategy === 'react' ? buildRuntimeToolSelection(llmConfig.tools, llmConfig.mcpToolIds) : [],
+        memoryEnabled: llmConfig.memoryEnabled,
+        memoryTopK: llmConfig.memoryTopK,
+        mcpToolIds: nextAgentStrategy === 'react' ? llmConfig.mcpToolIds : [],
+        knowledgeBaseId: llmConfig.knowledgeBaseId,
+        knowledgeTopK: llmConfig.knowledgeTopK,
+        knowledgeScoreThreshold: llmConfig.knowledgeScoreThreshold,
         inputParams: llmInputParams,
         outputParams: llmOutputParams
       };
@@ -933,12 +1053,29 @@ const EditorPage = () => {
   }, [ttsConfig, ttsInputParams, ttsOutputParams, selectedNode]);
 
   const selectedNodeType = String(selectedNode?.data?.type || '');
-  const isReActAgentNode = selectedNodeType === 'react_agent';
-  const isGenericLlmNode = selectedNodeType === 'llm' || isReActAgentNode;
+  const isLegacyReActNode = selectedNodeType === 'react_agent';
+  const isGenericLlmNode = selectedNodeType === 'llm';
+  const isReActMode = (isGenericLlmNode && llmConfig.agentStrategy === 'react') || isLegacyReActNode;
+  const isAgentPlanNode = [
+    'web_search',
+    'web_fetch',
+    'memory_write',
+    'memory_retrieve',
+    'knowledge_upsert',
+    'knowledge_retrieve',
+    'image_generate',
+    'video_generate'
+  ].includes(selectedNodeType);
   const selectedNodeProvider = resolveSelectedNodeProvider(selectedNode);
-  const availableLlmConfigs = isGenericLlmNode
-    ? llmGlobalConfigs
-    : llmGlobalConfigs.filter(
+  const agentToolOptions = [
+    { label: '写入记忆', value: 'memory_write' }
+  ];
+  const languageModelConfigs = llmGlobalConfigs.filter(
+    (config) => normalizeProviderKey(config.provider) !== 'volcengine_agent_plan'
+  );
+  const availableLlmConfigs = isGenericLlmNode || isLegacyReActNode
+    ? languageModelConfigs
+    : languageModelConfigs.filter(
         (config) => normalizeProviderKey(config.provider) === selectedNodeProvider
       );
   const ttsProviderOptions = providerOptions.filter(option => ['qwen', 'step'].includes(option.value));
@@ -980,6 +1117,15 @@ const EditorPage = () => {
     const ttsModelLabel = config.ttsModel ? `TTS: ${config.ttsModel}` : '';
     return [providerLabel, modelLabel, ttsModelLabel].filter(Boolean).join(' / ');
   };
+  const availableAgentPlanConfigs = llmGlobalConfigs.filter(
+    (config) => normalizeProviderKey(config.provider) === 'volcengine_agent_plan'
+  );
+  const updateSelectedNodeData = (patch: Record<string, unknown>) => {
+    if (!selectedNode) return;
+    const updatedData = { ...selectedNode.data, ...patch };
+    useWorkflowStore.getState().updateNode(selectedNode.id, updatedData);
+    useWorkflowStore.getState().setSelectedNode({ ...selectedNode, data: updatedData });
+  };
   const selectedNodeLabel = String(selectedNode?.data?.label || selectedNode?.id || '');
 
   return (
@@ -1011,6 +1157,18 @@ const EditorPage = () => {
         
         <div className="workflow-actions">
           <LLMConfigModal />
+          <Button
+            icon={<DatabaseOutlined />}
+            onClick={() => navigate('/knowledge')}
+          >
+            知识库
+          </Button>
+          <Button
+            icon={<ApiOutlined />}
+            onClick={() => navigate('/mcp-tools')}
+          >
+            MCP 工具
+          </Button>
           <Button
             icon={<PlusOutlined />}
             onClick={handleCreateNew}
@@ -1332,9 +1490,26 @@ const EditorPage = () => {
                       </div>
                     </Form.Item>
 
-                    {isReActAgentNode && (
-                      <Form.Item label="最大 ReAct 步数">
-                        <Input
+	                    {isGenericLlmNode && (
+	                      <Form.Item label="Agent策略">
+	                        <Select
+	                          value={llmConfig.agentStrategy}
+	                          onChange={(value) => setLlmConfig({
+	                            ...llmConfig,
+	                            agentStrategy: value,
+	                            tools: value === 'react' ? llmConfig.tools : [],
+	                            mcpToolIds: value === 'react' ? llmConfig.mcpToolIds : []
+	                          })}
+	                        >
+	                          <Select.Option value="none">普通大模型调用</Select.Option>
+	                          <Select.Option value="react">ReAct（支持 Tools）</Select.Option>
+	                        </Select>
+	                      </Form.Item>
+	                    )}
+
+	                    {isReActMode && (
+	                      <Form.Item label="最大 ReAct 步数">
+	                        <Input
                           type="number"
                           min="1"
                           max="20"
@@ -1345,10 +1520,132 @@ const EditorPage = () => {
                           })}
                         />
                         <div className="workflow-field-hint">
-                          每一步只能做一次工具调用或给出最终答案，超过步数会停止执行
-                        </div>
-                      </Form.Item>
-                    )}
+	                          每一步只能做一次工具调用或给出最终答案，超过步数会停止执行
+	                        </div>
+	                      </Form.Item>
+	                    )}
+
+	                    {isReActMode && (
+	                      <Form.Item label="工具列表">
+	                        <Checkbox.Group
+	                          value={llmConfig.tools}
+	                          options={agentToolOptions}
+	                          onChange={(values) => setLlmConfig({
+	                            ...llmConfig,
+	                            tools: values.map(String)
+	                          })}
+	                        />
+	                        <div className="workflow-field-hint">
+	                          写入记忆用于让 ReAct 在需要时保存稳定结论；联网搜索请在 MCP 工具中选择。
+	                        </div>
+	                      </Form.Item>
+	                    )}
+
+	                    {isReActMode && (
+	                      <Form.Item label="MCP 工具">
+	                        <Select
+	                          mode="multiple"
+	                          value={llmConfig.mcpToolIds}
+	                          placeholder="选择当前大模型节点可调用的 MCP 工具"
+	                          allowClear
+	                          onChange={(values) => {
+	                            const nextIds = values.map(String);
+	                            setLlmConfig({
+	                              ...llmConfig,
+	                              mcpToolIds: nextIds
+	                            });
+	                          }}
+	                          options={mcpTools
+	                            .filter((tool) => tool.enabled === 1)
+	                            .map((tool) => ({
+	                              value: String(tool.id),
+	                              label: `${tool.name}（${tool.toolName}）`
+	                            }))}
+	                        />
+	                        <div className="workflow-field-hint">
+	                          MCP 工具作为大模型节点的可选工具组件使用；可在顶部“MCP 工具”中添加 Agent Plan 联网搜索。
+	                        </div>
+	                      </Form.Item>
+	                    )}
+
+	                    <div className="workflow-config-section">
+	                      <div className="workflow-config-section-title">上下文能力</div>
+	                      <Form.Item>
+	                        <Checkbox
+	                          checked={llmConfig.memoryEnabled}
+	                          onChange={(e) => setLlmConfig({
+	                            ...llmConfig,
+	                            memoryEnabled: e.target.checked
+	                          })}
+	                        >
+	                          启用记忆召回
+	                        </Checkbox>
+	                        <div className="workflow-field-hint">
+	                          记忆是大模型节点的上下文能力：执行此节点前召回相关记忆，注入到当前提示词。
+	                        </div>
+	                      </Form.Item>
+	                      {llmConfig.memoryEnabled && (
+	                        <Form.Item label="记忆 TopK">
+	                          <Input
+	                            type="number"
+	                            min="1"
+	                            max="20"
+	                            value={llmConfig.memoryTopK}
+	                            onChange={(e) => setLlmConfig({
+	                              ...llmConfig,
+	                              memoryTopK: Math.min(20, Math.max(1, parseInt(e.target.value, 10) || 5))
+	                            })}
+	                          />
+	                        </Form.Item>
+	                      )}
+	                      <Form.Item label="知识库">
+	                        <Select
+	                          value={llmConfig.knowledgeBaseId}
+	                          placeholder="选择知识库作为当前大模型节点的 RAG 上下文"
+	                          allowClear
+	                          onChange={(value) => setLlmConfig({
+	                            ...llmConfig,
+	                            knowledgeBaseId: value
+	                          })}
+	                          options={knowledgeBases.map((base) => ({
+	                            value: String(base.id),
+	                            label: `${base.name}（${base.documentCount || 0} 文档 / ${base.chunkCount || 0} 分片）`
+	                          }))}
+	                        />
+	                        <div className="workflow-field-hint">
+	                          知识库作为大模型节点的可选组件使用；可在顶部“知识库”中创建、导入文本并建立索引。
+	                        </div>
+	                      </Form.Item>
+	                      {llmConfig.knowledgeBaseId && (
+	                        <>
+	                          <Form.Item label="知识库 TopK">
+	                            <Input
+	                              type="number"
+	                              min="1"
+	                              max="20"
+	                              value={llmConfig.knowledgeTopK}
+	                              onChange={(e) => setLlmConfig({
+	                                ...llmConfig,
+	                                knowledgeTopK: Math.min(20, Math.max(1, parseInt(e.target.value, 10) || 5))
+	                              })}
+	                            />
+	                          </Form.Item>
+	                          <Form.Item label="最低相关度">
+	                            <Input
+	                              type="number"
+	                              min="0"
+	                              max="1"
+	                              step="0.05"
+	                              value={llmConfig.knowledgeScoreThreshold}
+	                              onChange={(e) => setLlmConfig({
+	                                ...llmConfig,
+	                                knowledgeScoreThreshold: Math.min(1, Math.max(0, parseFloat(e.target.value) || 0))
+	                              })}
+	                            />
+	                          </Form.Item>
+	                        </>
+	                      )}
+	                    </div>
 
                     {/* 全局配置选择 */}
                     <Form.Item
@@ -1367,8 +1664,7 @@ const EditorPage = () => {
                                 configId: value,
                                 apiUrl: config.apiUrl,
                                 apiKey: '',
-                                model: config.model,
-                                temperature: config.temperature
+                                model: config.model
                               });
                             }
                           } else {
@@ -1379,7 +1675,7 @@ const EditorPage = () => {
                               apiUrl: '',
                               apiKey: '',
                               model: '',
-                              temperature: 0.7
+                              temperature: llmConfig.temperature
                             });
                           }
                         }}
@@ -1437,21 +1733,22 @@ const EditorPage = () => {
                             onChange={(e) => setLlmConfig({...llmConfig, model: e.target.value})}
                           />
                         </Form.Item>
-                        <Form.Item label="温度">
-                          <Input
-                            type="number"
-                            step="0.1"
-                            min="0"
-                            max="2"
-                            value={llmConfig.temperature}
-                            onChange={(e) => setLlmConfig({...llmConfig, temperature: parseFloat(e.target.value) || 0.7})}
-                          />
-                          <div className="workflow-field-hint">
-                            控制输出随机性，范围 0-2，值越高越随机
-                          </div>
-                        </Form.Item>
                       </>
                     )}
+
+                    <Form.Item label="温度">
+                      <Input
+                        type="number"
+                        step="0.1"
+                        min="0"
+                        max="2"
+                        value={llmConfig.temperature}
+                        onChange={(e) => setLlmConfig({...llmConfig, temperature: parseFloat(e.target.value) || 0.7})}
+                      />
+                      <div className="workflow-field-hint">
+                        控制当前节点输出随机性，范围 0-2，值越高越随机
+                      </div>
+                    </Form.Item>
 
                     {/* 已选择全局配置时显示配置信息 */}
                     {llmConfig.configId && (
@@ -1460,7 +1757,6 @@ const EditorPage = () => {
                         <div>供应商: {getProviderLabel(llmConfig.provider)}</div>
                         <div>API 地址: {llmConfig.apiUrl}</div>
                         <div>模型: {llmConfig.model}</div>
-                        <div>温度: {llmConfig.temperature}</div>
                       </div>
                     )}
 
@@ -1802,17 +2098,239 @@ const EditorPage = () => {
                       )}
                     </div>
 
-                    <Button type="primary" block onClick={handleSaveTtsConfig}>
-                      保存配置
-                    </Button>
+	                    <Button type="primary" block onClick={handleSaveTtsConfig}>
+	                      保存配置
+	                    </Button>
+	                  </Form>
+	                )}
+
+	                {/* Agent Plan / Harness 节点配置 */}
+	                {isAgentPlanNode && (
+	                  <Form layout="vertical" className="workflow-config-form">
+	                    <Form.Item label="Agent Plan 全局配置">
+	                      <Select
+	                        value={(selectedNode.data?.configId as number) || undefined}
+	                        placeholder="选择火山方舟 Agent Plan 配置"
+	                        allowClear
+	                        onChange={(value) => {
+	                          if (value) {
+	                            const config = llmGlobalConfigs.find(c => c.id === value);
+	                            updateSelectedNodeData({
+	                              provider: config ? normalizeProviderKey(config.provider) : 'volcengine_agent_plan',
+	                              configId: value,
+	                              apiUrl: config?.apiUrl || '',
+	                              apiKey: '',
+	                              model: ''
+	                            });
+	                          } else {
+	                            updateSelectedNodeData({
+	                              provider: 'volcengine_agent_plan',
+	                              configId: undefined,
+	                              apiUrl: '',
+	                              apiKey: '',
+	                              model: ''
+	                            });
+	                          }
+	                        }}
+	                      >
+	                        {availableAgentPlanConfigs.map(config => (
+	                          <Select.Option key={config.id} value={config.id}>
+	                            {getGlobalConfigLabel(config)}
+	                          </Select.Option>
+	                        ))}
+	                      </Select>
+                      <div className="workflow-field-hint">
+                        Agent Plan 提供 Doubao-embedding-vision 记忆召回，以及图片和视频生成能力。
+                      </div>
+	                    </Form.Item>
+
+	                    {!selectedNode.data?.configId && (
+	                      <>
+	                        <Form.Item label="API 地址">
+	                          <Input
+	                            placeholder="https://ark.cn-beijing.volces.com/api/plan/v3"
+	                            value={(selectedNode.data?.apiUrl as string) || ''}
+	                            onChange={(e) => updateSelectedNodeData({ provider: 'volcengine_agent_plan', apiUrl: e.target.value })}
+	                          />
+	                        </Form.Item>
+	                        <Form.Item label="API Key">
+	                          <Input.Password
+	                            value={(selectedNode.data?.apiKey as string) || ''}
+	                            onChange={(e) => updateSelectedNodeData({ apiKey: e.target.value })}
+	                          />
+	                        </Form.Item>
+	                        <Form.Item label="模型覆盖">
+	                          <Input
+	                            placeholder="可选。为空时使用全局配置里的对应模型"
+	                            value={(selectedNode.data?.model as string) || ''}
+	                            onChange={(e) => updateSelectedNodeData({ model: e.target.value })}
+	                          />
+	                        </Form.Item>
+	                      </>
+	                    )}
+
+	                    {selectedNodeType === 'web_search' && (
+	                      <>
+	                        <Form.Item label="搜索问题">
+	                          <Input.TextArea
+	                            rows={3}
+	                            value={(selectedNode.data?.query as string) || ''}
+	                            onChange={(e) => updateSelectedNodeData({ query: e.target.value })}
+	                          />
+	                        </Form.Item>
+	                        <Form.Item label="结果数量">
+	                          <Input
+	                            type="number"
+	                            min="1"
+	                            max="10"
+	                            value={(selectedNode.data?.limit as number) || 5}
+	                            onChange={(e) => updateSelectedNodeData({ limit: parseInt(e.target.value, 10) || 5 })}
+	                          />
+	                        </Form.Item>
+	                      </>
+	                    )}
+
+	                    {selectedNodeType === 'web_fetch' && (
+	                      <Form.Item label="URL 列表">
+	                        <Input.TextArea
+	                          rows={4}
+	                          placeholder="多个 URL 可用换行分隔"
+	                          value={(selectedNode.data?.urls as string) || ''}
+	                          onChange={(e) => updateSelectedNodeData({ urls: e.target.value })}
+	                        />
+	                      </Form.Item>
+	                    )}
+
+	                    {['memory_write', 'knowledge_upsert'].includes(selectedNodeType) && (
+	                      <>
+	                        {selectedNodeType === 'knowledge_upsert' && (
+	                          <Form.Item label="知识库">
+	                            <Select
+	                              value={(selectedNode.data?.knowledgeBaseId as string) || undefined}
+	                              placeholder="选择知识库，未选择时写入默认知识库"
+	                              allowClear
+	                              onChange={(value) => updateSelectedNodeData({ knowledgeBaseId: value || 'default' })}
+	                              options={knowledgeBases.map((base) => ({
+	                                value: String(base.id),
+	                                label: `${base.name}（${base.documentCount || 0} 文档 / ${base.chunkCount || 0} 分片）`
+	                              }))}
+	                            />
+	                            <div className="workflow-field-hint">
+	                              可在顶部“知识库”中创建、导入文本并建立索引。
+	                            </div>
+	                          </Form.Item>
+	                        )}
+	                        <Form.Item label={selectedNodeType === 'memory_write' ? '记忆内容' : '知识内容'}>
+	                          <Input.TextArea
+	                            rows={5}
+	                            value={(selectedNode.data?.content as string) || ''}
+	                            onChange={(e) => updateSelectedNodeData({ content: e.target.value })}
+	                          />
+	                        </Form.Item>
+	                        <Form.Item label="标签">
+	                          <Input
+	                            placeholder="多个标签用逗号分隔"
+	                            value={(selectedNode.data?.tags as string) || ''}
+	                            onChange={(e) => updateSelectedNodeData({ tags: e.target.value })}
+	                          />
+	                        </Form.Item>
+	                      </>
+	                    )}
+
+	                    {['memory_retrieve', 'knowledge_retrieve'].includes(selectedNodeType) && (
+	                      <>
+	                        {selectedNodeType === 'knowledge_retrieve' && (
+	                          <Form.Item label="知识库">
+	                            <Select
+	                              value={(selectedNode.data?.knowledgeBaseId as string) || undefined}
+	                              placeholder="选择要检索的知识库"
+	                              allowClear
+	                              onChange={(value) => updateSelectedNodeData({ knowledgeBaseId: value || 'default' })}
+	                              options={knowledgeBases.map((base) => ({
+	                                value: String(base.id),
+	                                label: `${base.name}（${base.documentCount || 0} 文档 / ${base.chunkCount || 0} 分片）`
+	                              }))}
+	                            />
+	                          </Form.Item>
+	                        )}
+	                        <Form.Item label="召回问题">
+	                          <Input.TextArea
+	                            rows={3}
+	                            value={(selectedNode.data?.query as string) || ''}
+	                            onChange={(e) => updateSelectedNodeData({ query: e.target.value })}
+	                          />
+	                        </Form.Item>
+	                        <Form.Item label="TopK">
+	                          <Input
+	                            type="number"
+	                            min="1"
+	                            max="20"
+	                            value={(selectedNode.data?.topK as number) || 5}
+	                            onChange={(e) => updateSelectedNodeData({ topK: parseInt(e.target.value, 10) || 5 })}
+	                          />
+	                        </Form.Item>
+	                      </>
+	                    )}
+
+	                    {selectedNodeType === 'image_generate' && (
+	                      <>
+	                        <Form.Item label="图片提示词">
+	                          <Input.TextArea
+	                            rows={5}
+	                            value={(selectedNode.data?.prompt as string) || ''}
+	                            onChange={(e) => updateSelectedNodeData({ prompt: e.target.value })}
+	                          />
+	                        </Form.Item>
+	                        <Form.Item label="参考图 URL">
+	                          <Input
+	                            value={(selectedNode.data?.referenceImageUrl as string) || ''}
+	                            onChange={(e) => updateSelectedNodeData({ referenceImageUrl: e.target.value })}
+	                          />
+	                        </Form.Item>
+	                        <Form.Item label="尺寸">
+	                          <Input
+	                            placeholder="2K"
+	                            value={(selectedNode.data?.size as string) || '2K'}
+	                            onChange={(e) => updateSelectedNodeData({ size: e.target.value })}
+	                          />
+	                        </Form.Item>
+	                      </>
+	                    )}
+
+	                    {selectedNodeType === 'video_generate' && (
+	                      <>
+	                        <Form.Item label="视频提示词">
+	                          <Input.TextArea
+	                            rows={5}
+	                            value={(selectedNode.data?.prompt as string) || ''}
+	                            onChange={(e) => updateSelectedNodeData({ prompt: e.target.value })}
+	                          />
+	                        </Form.Item>
+	                        <Form.Item label="首帧/参考图 URL">
+	                          <Input
+	                            value={(selectedNode.data?.referenceImageUrl as string) || ''}
+	                            onChange={(e) => updateSelectedNodeData({ referenceImageUrl: e.target.value })}
+	                          />
+	                        </Form.Item>
+	                        <Form.Item label="时长(秒)">
+	                          <Input
+	                            type="number"
+	                            value={(selectedNode.data?.duration as number) || 5}
+	                            onChange={(e) => updateSelectedNodeData({ duration: parseInt(e.target.value, 10) || 5 })}
+	                          />
+	                        </Form.Item>
+	                      </>
+	                    )}
+
                   </Form>
                 )}
 
-                {/* 其他节点配置 */}
-                {selectedNode.data?.type !== 'input' &&
-                 selectedNode.data?.type !== 'output' &&
-                 !isLlmNodeType(selectedNodeType) &&
-                 selectedNode.data?.type !== 'tts' && (
+	                {/* 其他节点配置 */}
+	                {selectedNode.data?.type !== 'input' &&
+	                 selectedNode.data?.type !== 'output' &&
+	                 !isLlmNodeType(selectedNodeType) &&
+	                 selectedNode.data?.type !== 'tts' &&
+	                 !isAgentPlanNode && (
                   <div className="workflow-config-empty">
                     该节点暂无可配置项
                   </div>

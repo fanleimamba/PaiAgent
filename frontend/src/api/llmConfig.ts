@@ -8,6 +8,10 @@ export interface LLMGlobalConfig {
   apiKey: string;
   model: string;
   ttsModel?: string;
+  embeddingModel?: string;
+  imageModel?: string;
+  videoModel?: string;
+  memoryEnabled?: number;
   temperature: number;
   isDefault: number;
   createdAt: string;
@@ -22,6 +26,10 @@ export interface LLMConfigRequest {
   apiKey: string;
   model: string;
   ttsModel?: string;
+  embeddingModel?: string;
+  imageModel?: string;
+  videoModel?: string;
+  memoryEnabled?: number;
   temperature?: number;
   isDefault?: number;
 }

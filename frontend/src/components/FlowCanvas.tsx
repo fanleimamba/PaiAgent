@@ -33,6 +33,8 @@ type WorkflowNodeData = {
   inputParams?: unknown[];
   outputParams?: unknown[];
   maxSteps?: number;
+  agentStrategy?: string;
+  tools?: string[];
   conditions?: Array<{ id: string; field?: string; operator?: string; value?: string }>;
 };
 
@@ -53,7 +55,7 @@ const nodeMeta: Record<string, { icon: string; tone: string; caption: string }> 
   input: { icon: 'IN', tone: 'node-tone-green', caption: 'Start input' },
   output: { icon: 'OUT', tone: 'node-tone-purple', caption: 'Final response' },
   llm: { icon: 'AI', tone: 'node-tone-blue', caption: 'Model call' },
-  react_agent: { icon: 'RA', tone: 'node-tone-blue', caption: 'ReAct loop' },
+  react_agent: { icon: 'AI', tone: 'node-tone-blue', caption: 'ReAct compatibility' },
   openai: { icon: 'AI', tone: 'node-tone-blue', caption: 'OpenAI' },
   deepseek: { icon: 'DS', tone: 'node-tone-blue', caption: 'DeepSeek' },
   qwen: { icon: 'QW', tone: 'node-tone-blue', caption: 'Qwen' },
@@ -67,12 +69,25 @@ const getNodeMeta = (type?: string) => (
   nodeMeta[type || ''] || { icon: 'FN', tone: 'node-tone-slate', caption: 'Workflow node' }
 );
 
+const getToolLabels = (tools: string[]) => {
+  const labels: string[] = [];
+  if (tools.includes('web_search') || tools.includes('web_fetch')) {
+    labels.push('联网搜索');
+  }
+  if (tools.includes('memory_write')) {
+    labels.push('写入记忆');
+  }
+  return labels;
+};
+
 const WorkflowNodeCard = ({ data, selected }: NodeProps<WorkflowCardNode>) => {
   const workflowType = data.type || '';
   const meta = getNodeMeta(workflowType);
   const inputCount = Array.isArray(data.inputParams) ? data.inputParams.length : 0;
   const outputCount = Array.isArray(data.outputParams) ? data.outputParams.length : 0;
   const modelLabel = data.model || data.provider || data.skillName || meta.caption;
+  const tools = Array.isArray(data.tools) ? data.tools : [];
+  const toolLabels = getToolLabels(tools);
 
   const isCondition = workflowType === 'condition';
   const conditions = Array.isArray(data.conditions) ? data.conditions : [];
@@ -106,6 +121,20 @@ const WorkflowNodeCard = ({ data, selected }: NodeProps<WorkflowCardNode>) => {
             <span className="condition-badge default">D</span>
             <span className="condition-label">否则(默认)</span>
           </div>
+        </div>
+      )}
+      {((workflowType === 'llm' && data.agentStrategy === 'react') || workflowType === 'react_agent') && (
+        <div className="workflow-node-conditions">
+          <div className="workflow-node-condition-item">
+            <span className="condition-badge">A</span>
+            <span className="condition-label">Agent策略 ReAct</span>
+          </div>
+          {toolLabels.length > 0 && (
+            <div className="workflow-node-condition-item">
+              <span className="condition-badge default">{toolLabels.length}</span>
+              <span className="condition-label">工具 {toolLabels.join(', ')}</span>
+            </div>
+          )}
         </div>
       )}
       <div className="workflow-node-footer">
