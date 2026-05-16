@@ -35,6 +35,8 @@ type WorkflowNodeData = {
   maxSteps?: number;
   agentStrategy?: string;
   tools?: string[];
+  knowledgeBaseId?: string;
+  knowledgeBaseName?: string;
   conditions?: Array<{ id: string; field?: string; operator?: string; value?: string }>;
 };
 
@@ -97,6 +99,13 @@ const getToolLabels = (tools: string[]) => {
   return labels;
 };
 
+const getKnowledgeBaseLabel = (data: WorkflowNodeData) => {
+  if (!data.knowledgeBaseId) {
+    return '';
+  }
+  return data.knowledgeBaseName || '已启用';
+};
+
 const WorkflowNodeCard = ({ data, selected }: NodeProps<WorkflowCardNode>) => {
   const workflowType = data.type || '';
   const meta = getNodeMeta(workflowType);
@@ -105,6 +114,8 @@ const WorkflowNodeCard = ({ data, selected }: NodeProps<WorkflowCardNode>) => {
   const modelLabel = data.model || data.provider || data.skillName || meta.caption;
   const tools = Array.isArray(data.tools) ? data.tools : [];
   const toolLabels = getToolLabels(tools);
+  const isReActMode = (workflowType === 'llm' && data.agentStrategy === 'react') || workflowType === 'react_agent';
+  const knowledgeBaseLabel = getKnowledgeBaseLabel(data);
 
   const isCondition = workflowType === 'condition';
   const conditions = Array.isArray(data.conditions) ? data.conditions : [];
@@ -140,16 +151,24 @@ const WorkflowNodeCard = ({ data, selected }: NodeProps<WorkflowCardNode>) => {
           </div>
         </div>
       )}
-      {((workflowType === 'llm' && data.agentStrategy === 'react') || workflowType === 'react_agent') && (
+      {(isReActMode || knowledgeBaseLabel) && (
         <div className="workflow-node-conditions">
-          <div className="workflow-node-condition-item">
-            <span className="condition-badge">A</span>
-            <span className="condition-label">Agent策略 ReAct</span>
-          </div>
-          {toolLabels.length > 0 && (
+          {isReActMode && (
+            <div className="workflow-node-condition-item">
+              <span className="condition-badge">A</span>
+              <span className="condition-label">Agent策略 ReAct</span>
+            </div>
+          )}
+          {isReActMode && toolLabels.length > 0 && (
             <div className="workflow-node-condition-item">
               <span className="condition-badge default">{toolLabels.length}</span>
               <span className="condition-label">工具 {toolLabels.join(', ')}</span>
+            </div>
+          )}
+          {knowledgeBaseLabel && (
+            <div className="workflow-node-condition-item">
+              <span className="condition-badge knowledge">K</span>
+              <span className="condition-label">知识库 {knowledgeBaseLabel}</span>
             </div>
           )}
         </div>

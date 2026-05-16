@@ -40,6 +40,39 @@ const statusText: Record<string, string> = {
   FAILED: '失败',
 };
 
+const getAgentPlanConfigLabel = (config: { provider: string; model?: string; embeddingModel?: string; configName?: string }) => {
+  const providerLabel = getProviderLabel(config.provider);
+  const modelName = config.model?.trim() || config.embeddingModel?.trim() || cleanInternalConfigName(config.configName, config.provider);
+
+  return modelName ? `${providerLabel} · ${modelName}` : providerLabel;
+};
+
+const getAgentPlanConfigHint = (config: { embeddingModel?: string; memoryEnabled?: number }) => [
+  config.embeddingModel ? `向量: ${config.embeddingModel}` : '',
+  config.memoryEnabled === 1 ? '记忆已启用' : '',
+].filter(Boolean).join(' / ');
+
+const cleanInternalConfigName = (configName?: string, provider?: string) => {
+  if (!configName) return '';
+
+  let name = configName.trim();
+  const providerPrefixes = [
+    provider,
+    normalizeProviderKey(provider),
+    'volcengine_agent_plan',
+    'agent_plan',
+    'volcengine',
+    'ark',
+  ].filter(Boolean) as string[];
+
+  const matchedPrefix = providerPrefixes.find((prefix) => name.toLowerCase().startsWith(`${prefix.toLowerCase()}-`));
+  if (matchedPrefix) {
+    name = name.slice(matchedPrefix.length + 1);
+  }
+
+  return name.replace(/-\d{10,}$/, '');
+};
+
 const KnowledgePage = () => {
   const navigate = useNavigate();
   const { configs: llmConfigs, fetchAllConfigs } = useLLMConfigStore();
@@ -373,10 +406,15 @@ const KnowledgePage = () => {
             <Input.TextArea rows={3} maxLength={200} placeholder="说明内容范围、适用工作流和维护规则" />
           </Form.Item>
           <Form.Item name="configId" label="Agent Plan 配置">
-            <Select allowClear placeholder="可选。用于建立向量索引">
+            <Select allowClear optionLabelProp="label" placeholder="可选。用于建立向量索引">
               {agentPlanConfigs.map((config) => (
-                <Select.Option key={config.id} value={config.id}>
-                  {config.configName} · {getProviderLabel(config.provider)}
+                <Select.Option key={config.id} value={config.id} label={getAgentPlanConfigLabel(config)}>
+                  <Space direction="vertical" size={0}>
+                    <span>{getAgentPlanConfigLabel(config)}</span>
+                    {getAgentPlanConfigHint(config) && (
+                      <span className="knowledge-muted">{getAgentPlanConfigHint(config)}</span>
+                    )}
+                  </Space>
                 </Select.Option>
               ))}
             </Select>

@@ -23,9 +23,11 @@ import org.springframework.web.multipart.MultipartFile;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 @Service
 public class KnowledgeBaseService {
@@ -291,12 +293,13 @@ public class KnowledgeBaseService {
     public Map<String, Object> retrieve(String knowledgeBaseId, String query, List<Double> queryEmbedding,
                                         int topK, double scoreThreshold) {
         Long baseId = resolveBaseId(knowledgeBaseId);
+        double effectiveThreshold = scoreThreshold <= 0 ? 0.000001 : scoreThreshold;
         List<Map<String, Object>> matches = knowledgeChunkMapper.selectList(new LambdaQueryWrapper<KnowledgeChunk>()
                         .eq(KnowledgeChunk::getKnowledgeBaseId, baseId)
                         .eq(KnowledgeChunk::getStatus, "READY"))
                 .stream()
                 .map(chunk -> toMatch(chunk, query, queryEmbedding))
-                .filter(match -> (double) match.get("score") >= scoreThreshold)
+                .filter(match -> (double) match.get("score") >= effectiveThreshold)
                 .sorted(Comparator.comparingDouble((Map<String, Object> match) -> (double) match.get("score")).reversed())
                 .limit(Math.max(1, topK))
                 .toList();
@@ -422,11 +425,9 @@ public class KnowledgeBaseService {
 
     private Map<String, Object> toMatch(KnowledgeChunk chunk, String query, List<Double> queryEmbedding) {
         List<Double> chunkEmbedding = parseEmbedding(chunk.getEmbedding());
-        double score = cosine(queryEmbedding, chunkEmbedding);
-        if (score == 0 && StringUtils.hasText(query) && chunk.getContent() != null
-                && chunk.getContent().toLowerCase().contains(query.toLowerCase())) {
-            score = 0.5;
-        }
+        double vectorScore = cosine(queryEmbedding, chunkEmbedding);
+        double textScore = textRelevance(query, chunk.getContent());
+        double score = Math.max(vectorScore, textScore);
         Map<String, Object> match = new LinkedHashMap<>();
         match.put("chunkId", chunk.getId());
         match.put("knowledgeBaseId", chunk.getKnowledgeBaseId());
@@ -437,6 +438,91 @@ public class KnowledgeBaseService {
         match.put("tags", chunk.getTags());
         match.put("score", score);
         return match;
+    }
+
+    private double textRelevance(String query, String content) {
+        if (!StringUtils.hasText(query) || !StringUtils.hasText(content)) {
+            return 0;
+        }
+        String normalizedQuery = normalizeSearchText(query);
+        String normalizedContent = normalizeSearchText(content);
+        if (!StringUtils.hasText(normalizedQuery) || !StringUtils.hasText(normalizedContent)) {
+            return 0;
+        }
+        if (normalizedContent.contains(normalizedQuery)) {
+            return 1;
+        }
+
+        Set<String> terms = searchTerms(normalizedQuery);
+        if (terms.isEmpty()) {
+            return 0;
+        }
+
+        double totalWeight = 0;
+        double matchedWeight = 0;
+        for (String term : terms) {
+            double weight = Math.min(4, Math.max(1, term.length() - 1));
+            totalWeight += weight;
+            if (normalizedContent.contains(term)) {
+                matchedWeight += weight;
+            }
+        }
+        if (totalWeight == 0 || matchedWeight == 0) {
+            return 0;
+        }
+        return Math.min(0.95, matchedWeight / totalWeight);
+    }
+
+    private String normalizeSearchText(String text) {
+        return text == null ? "" : text.toLowerCase()
+                .replaceAll("[^\\p{IsHan}\\p{IsAlphabetic}\\p{IsDigit}]+", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+    }
+
+    private Set<String> searchTerms(String normalizedQuery) {
+        Set<String> terms = new LinkedHashSet<>();
+        for (String part : normalizedQuery.split("\\s+")) {
+            if (!StringUtils.hasText(part)) {
+                continue;
+            }
+            if (containsHan(part)) {
+                addChineseTerms(terms, part);
+            } else if (part.length() >= 2 && !isStopTerm(part)) {
+                terms.add(part);
+            }
+        }
+        return terms;
+    }
+
+    private void addChineseTerms(Set<String> terms, String text) {
+        if (text.length() <= 4 && !isStopTerm(text)) {
+            terms.add(text);
+            return;
+        }
+        for (int size = 2; size <= 4; size++) {
+            if (text.length() < size) {
+                continue;
+            }
+            for (int i = 0; i <= text.length() - size; i++) {
+                String term = text.substring(i, i + size);
+                if (!isStopTerm(term)) {
+                    terms.add(term);
+                }
+            }
+        }
+    }
+
+    private boolean containsHan(String text) {
+        return text.codePoints().anyMatch(codePoint -> Character.UnicodeScript.of(codePoint) == Character.UnicodeScript.HAN);
+    }
+
+    private boolean isStopTerm(String term) {
+        return switch (term) {
+            case "应该", "怎么", "什么", "如何", "可以", "需要", "一个", "这个", "那个", "是否", "以及",
+                 "the", "and", "for", "with", "what", "how" -> true;
+            default -> false;
+        };
     }
 
     private Map<String, Object> toBaseMap(KnowledgeBase base) {

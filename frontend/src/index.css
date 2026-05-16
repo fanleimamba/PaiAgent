@@ -731,6 +731,10 @@ select {
   background: #64748b;
 }
 
+.workflow-node-condition-item .condition-badge.knowledge {
+  background: #059669;
+}
+
 .workflow-node-condition-item .condition-label {
   overflow: hidden;
   text-overflow: ellipsis;

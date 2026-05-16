@@ -68,7 +68,7 @@ public class ReActAgentNodeExecutor extends AbstractLLMNodeExecutor {
             throw new IllegalArgumentException("ReAct Agent 至少需要启用一个工具");
         }
 
-        String systemPrompt = buildSystemPrompt(config, availableTools);
+        String systemPrompt = buildSystemPrompt(config, availableTools, node.getData());
         ChatClient chatClient = chatClientFactory.createClient(
                 config.getProvider(),
                 config.getApiUrl(),
@@ -135,11 +135,15 @@ public class ReActAgentNodeExecutor extends AbstractLLMNodeExecutor {
         return buildOutput(message, trace, tokenUsage, true, message);
     }
 
-    private String buildSystemPrompt(LLMNodeConfig config, List<AgentTool> tools) {
+    private String buildSystemPrompt(LLMNodeConfig config, List<AgentTool> tools, Map<String, Object> nodeData) {
         StringBuilder sb = new StringBuilder();
         sb.append("你是一个运行在 PaiAgent 工作流节点里的 ReAct Agent。\n");
         sb.append("你必须通过 JSON 决策进行工具调用或给出最终答案，不要输出 Markdown 代码块。\n");
         sb.append("不要暴露完整隐藏推理链，只在 reasoningSummary 字段给一句简短行动理由。\n\n");
+
+        if (hasText(nodeData.get("knowledgeBaseId"))) {
+            sb.append("当前节点已配置知识库。回答项目资料、实现计划、配置字段或节点说明相关问题时，必须先调用 knowledge_retrieve 检索知识库，再基于 observation 回答。\n\n");
+        }
 
         if (config.getSkillName() != null && !config.getSkillName().isBlank()) {
             Optional<Skill> skill = skillRegistry.getSkill(config.getSkillName());
@@ -292,11 +296,10 @@ public class ReActAgentNodeExecutor extends AbstractLLMNodeExecutor {
 
     private List<String> resolveToolNames(Map<String, Object> data) {
         Object value = data == null ? null : data.get("tools");
-        if (value == null) {
-            return List.of();
-        }
         List<String> toolNames;
-        if (value instanceof List<?> list) {
+        if (value == null) {
+            toolNames = new ArrayList<>();
+        } else if (value instanceof List<?> list) {
             toolNames = list.stream()
                     .map(Object::toString)
                     .filter(toolName -> !toolName.isBlank())
@@ -308,12 +311,20 @@ public class ReActAgentNodeExecutor extends AbstractLLMNodeExecutor {
                     .collect(Collectors.toList());
         }
 
+        if (hasText(data == null ? null : data.get("knowledgeBaseId")) && !toolNames.contains("knowledge_retrieve")) {
+            toolNames = new ArrayList<>(toolNames);
+            toolNames.add("knowledge_retrieve");
+        }
         if (toolNames.contains("web_search") && !toolNames.contains("web_fetch")) {
             List<String> expanded = new ArrayList<>(toolNames);
             expanded.add("web_fetch");
             return expanded;
         }
         return toolNames;
+    }
+
+    private boolean hasText(Object value) {
+        return value != null && !String.valueOf(value).trim().isEmpty();
     }
 
     private void validateConfig(LLMNodeConfig config) {

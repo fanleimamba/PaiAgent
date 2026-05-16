@@ -89,6 +89,27 @@ const normalizeStringArray = (value: unknown) => {
   return value.map(String).filter(Boolean);
 };
 
+const enrichKnowledgeBaseNames = (nodes: Node[], knowledgeBases: KnowledgeBase[]) => {
+  if (knowledgeBases.length === 0) return nodes;
+  const nameById = new Map(knowledgeBases.map((base) => [String(base.id), base.name]));
+  let changed = false;
+  const nextNodes = nodes.map((node) => {
+    const knowledgeBaseId = node.data?.knowledgeBaseId;
+    if (typeof knowledgeBaseId !== 'string') return node;
+    const knowledgeBaseName = nameById.get(knowledgeBaseId);
+    if (!knowledgeBaseName || node.data?.knowledgeBaseName === knowledgeBaseName) return node;
+    changed = true;
+    return {
+      ...node,
+      data: {
+        ...node.data,
+        knowledgeBaseName,
+      },
+    };
+  });
+  return changed ? nextNodes : nodes;
+};
+
 /**
  * 工作流编辑器页面
  */
@@ -129,6 +150,7 @@ const EditorPage = () => {
     memoryTopK: 5,
     mcpToolIds: [] as string[],
     knowledgeBaseId: undefined as string | undefined,
+    knowledgeBaseName: '',
     knowledgeTopK: 5,
     knowledgeScoreThreshold: 0.2
   });
@@ -239,6 +261,7 @@ const EditorPage = () => {
         memoryTopK: (node.data?.memoryTopK as number) || 5,
         mcpToolIds: normalizeStringArray(node.data?.mcpToolIds),
         knowledgeBaseId: (node.data?.knowledgeBaseId as string) || undefined,
+        knowledgeBaseName: (node.data?.knowledgeBaseName as string) || '',
         knowledgeTopK: (node.data?.knowledgeTopK as number) || 5,
         knowledgeScoreThreshold: (node.data?.knowledgeScoreThreshold as number) || 0.2
       });
@@ -368,7 +391,7 @@ const EditorPage = () => {
         console.log('加载的工作流数据:', flowData);
         
         // 加载节点
-        const loadedNodes = normalizeWorkflowNodes(flowData.nodes || []);
+        const loadedNodes = enrichKnowledgeBaseNames(normalizeWorkflowNodes(flowData.nodes || []), knowledgeBases);
         setNodes(loadedNodes);
         
         // 加载连线并恢复箭头
@@ -398,7 +421,14 @@ const EditorPage = () => {
     } catch {
       message.error('工作流加载失败');
     }
-  }, [setCurrentWorkflowId, setEdges, setNodes]);
+  }, [knowledgeBases, setCurrentWorkflowId, setEdges, setNodes]);
+
+  useEffect(() => {
+    const enrichedNodes = enrichKnowledgeBaseNames(nodes, knowledgeBases);
+    if (enrichedNodes !== nodes) {
+      setNodes(enrichedNodes);
+    }
+  }, [knowledgeBases, nodes, setNodes]);
 
   // 从 URL 加载工作流
   useEffect(() => {
@@ -760,6 +790,9 @@ const EditorPage = () => {
 
     const useGlobalConfig = !!llmConfig.configId;
     const nextAgentStrategy = selectedNode.data?.type === 'react_agent' ? 'react' : llmConfig.agentStrategy;
+    const selectedKnowledgeBaseName = llmConfig.knowledgeBaseId
+      ? knowledgeBases.find((base) => String(base.id) === llmConfig.knowledgeBaseId)?.name || llmConfig.knowledgeBaseName
+      : '';
     const updatedData = {
       ...selectedNode.data,
       provider: llmConfig.provider,
@@ -777,6 +810,7 @@ const EditorPage = () => {
       memoryTopK: llmConfig.memoryTopK,
       mcpToolIds: nextAgentStrategy === 'react' ? llmConfig.mcpToolIds : [],
       knowledgeBaseId: llmConfig.knowledgeBaseId,
+      knowledgeBaseName: selectedKnowledgeBaseName,
       knowledgeTopK: llmConfig.knowledgeTopK,
       knowledgeScoreThreshold: llmConfig.knowledgeScoreThreshold,
       inputParams: llmInputParams,
@@ -995,6 +1029,9 @@ const EditorPage = () => {
 
       const useGlobalConfig = !!llmConfig.configId;
       const nextAgentStrategy = selectedNode.data?.type === 'react_agent' ? 'react' : llmConfig.agentStrategy;
+      const selectedKnowledgeBaseName = llmConfig.knowledgeBaseId
+        ? knowledgeBases.find((base) => String(base.id) === llmConfig.knowledgeBaseId)?.name || llmConfig.knowledgeBaseName
+        : '';
       const updatedData = {
         ...selectedNode.data,
         provider: llmConfig.provider,
@@ -1012,6 +1049,7 @@ const EditorPage = () => {
         memoryTopK: llmConfig.memoryTopK,
         mcpToolIds: nextAgentStrategy === 'react' ? llmConfig.mcpToolIds : [],
         knowledgeBaseId: llmConfig.knowledgeBaseId,
+        knowledgeBaseName: selectedKnowledgeBaseName,
         knowledgeTopK: llmConfig.knowledgeTopK,
         knowledgeScoreThreshold: llmConfig.knowledgeScoreThreshold,
         inputParams: llmInputParams,
@@ -1028,7 +1066,7 @@ const EditorPage = () => {
         clearTimeout(autoSaveTimerRef.current);
       }
     };
-  }, [llmConfig, llmInputParams, llmOutputParams, selectedNode]);
+  }, [llmConfig, llmInputParams, llmOutputParams, knowledgeBases, selectedNode]);
 
   // 自动保存 TTS 节点配置
   useEffect(() => {
@@ -1669,10 +1707,14 @@ const EditorPage = () => {
 	                          value={llmConfig.knowledgeBaseId}
 	                          placeholder="选择知识库作为当前大模型节点的 RAG 上下文"
 	                          allowClear
-	                          onChange={(value) => setLlmConfig({
-	                            ...llmConfig,
-	                            knowledgeBaseId: value
-	                          })}
+	                          onChange={(value) => {
+	                            const selectedBase = knowledgeBases.find((base) => String(base.id) === value);
+	                            setLlmConfig({
+	                              ...llmConfig,
+	                              knowledgeBaseId: value,
+	                              knowledgeBaseName: selectedBase?.name || ''
+	                            });
+	                          }}
 	                          options={knowledgeBases.map((base) => ({
 	                            value: String(base.id),
 	                            label: `${base.name}（${base.documentCount || 0} 文档 / ${base.chunkCount || 0} 分片）`

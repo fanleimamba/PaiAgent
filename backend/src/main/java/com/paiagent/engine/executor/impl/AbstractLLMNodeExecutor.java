@@ -124,7 +124,7 @@ public abstract class AbstractLLMNodeExecutor implements NodeExecutor {
                 config.getInputParams(),
                 input
         );
-        String contextPrompt = buildContextPrompt(node, userPrompt);
+        String contextPrompt = buildContextPrompt(node, resolveContextQuery(config.getInputParams(), input, userPrompt));
         if (!contextPrompt.isBlank()) {
             userPrompt = contextPrompt + "\n\n---\n\n用户任务:\n" + userPrompt;
         }
@@ -182,6 +182,38 @@ public abstract class AbstractLLMNodeExecutor implements NodeExecutor {
         }
 
         return sb.toString();
+    }
+
+    private String resolveContextQuery(List<Map<String, Object>> inputParams, Map<String, Object> input, String userPrompt) {
+        if (inputParams != null) {
+            for (Map<String, Object> param : inputParams) {
+                if (!"reference".equals(String.valueOf(param.get("type")))) {
+                    continue;
+                }
+                Object referenceNode = param.get("referenceNode");
+                if (referenceNode == null) {
+                    continue;
+                }
+                String reference = String.valueOf(referenceNode);
+                String refParamName = reference.contains(".")
+                        ? reference.substring(reference.lastIndexOf('.') + 1)
+                        : reference;
+                Object refValue = input.get(refParamName);
+                if (refValue == null && "user_input".equals(refParamName)) {
+                    refValue = input.get("input");
+                }
+                String text = textData(refValue);
+                if (!text.isBlank()) {
+                    return text;
+                }
+            }
+        }
+
+        String directInput = textData(input.get("input"));
+        if (!directInput.isBlank()) {
+            return directInput;
+        }
+        return userPrompt;
     }
 
     private String buildContextPrompt(WorkflowNode node, String query) {
