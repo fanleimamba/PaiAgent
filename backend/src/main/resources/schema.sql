@@ -90,7 +90,12 @@ INSERT INTO node_definition (node_type, display_name, category, icon, input_sche
 ('tts', '超拟人音频合成', 'TOOL', '🔊',
  '{"type": "object", "properties": {"text": {"type": "string"}}}',
  '{"type": "object", "properties": {"audioUrl": {"type": "string"}, "duration": {"type": "number"}, "fileSize": {"type": "number"}}}',
- '{"type": "object", "properties": {"provider": {"type": "string"}, "configId": {"type": "number"}, "apiUrl": {"type": "string"}, "apiKey": {"type": "string"}, "model": {"type": "string", "default": "qwen3-tts-flash"}, "voice": {"type": "string", "default": "Cherry"}, "languageType": {"type": "string", "default": "Auto"}, "instruction": {"type": "string"}, "speed": {"type": "number", "default": 1.0}, "volume": {"type": "number", "default": 1.0}, "sampleRate": {"type": "number", "default": 24000}}}');
+ '{"type": "object", "properties": {"provider": {"type": "string"}, "configId": {"type": "number"}, "apiUrl": {"type": "string"}, "apiKey": {"type": "string"}, "model": {"type": "string", "default": "qwen3-tts-flash"}, "voice": {"type": "string", "default": "Cherry"}, "languageType": {"type": "string", "default": "Auto"}, "instruction": {"type": "string"}, "speed": {"type": "number", "default": 1.0}, "volume": {"type": "number", "default": 1.0}, "sampleRate": {"type": "number", "default": 24000}}}'),
+
+('condition', '条件分支', 'CONTROL', '🔀',
+ '{"type": "object", "properties": {"input": {"type": "object"}}}',
+ '{"type": "object", "properties": {"__selectedBranch__": {"type": "string"}, "__conditionNodeId__": {"type": "string"}}}',
+ '{"type": "object", "properties": {"conditions": {"type": "array", "items": {"type": "object", "properties": {"id": {"type": "string"}, "field": {"type": "string"}, "operator": {"type": "string", "enum": ["eq", "neq", "gt", "gte", "lt", "lte", "contains", "notContains", "startsWith", "endsWith", "isEmpty", "isNotEmpty"]}, "value": {"type": "string"}}}}}}');
 
 -- 全局模型配置表（LLM 与 TTS 共用）
 CREATE TABLE IF NOT EXISTS llm_global_config (

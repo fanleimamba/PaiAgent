@@ -39,11 +39,13 @@ const NodePanel = ({ onDragStart }: NodePanelProps) => {
   // 按分类分组节点
   const llmNodes = nodeTypes.filter((node) => node.category === 'LLM');
   const toolNodes = nodeTypes.filter((node) => node.category === 'TOOL');
+  const controlNodes = nodeTypes.filter((node) => node.category === 'CONTROL');
 
   const getNodeTone = (node: NodeDefinition) => {
     if (node.nodeType === 'input') return 'node-library-green';
     if (node.nodeType === 'output') return 'node-library-purple';
     if (node.category === 'TOOL') return 'node-library-amber';
+    if (node.category === 'CONTROL') return 'node-library-purple';
     return 'node-library-blue';
   };
 
@@ -100,6 +102,24 @@ const NodePanel = ({ onDragStart }: NodePanelProps) => {
         </div>
       ),
     },
+    ...(controlNodes.length > 0
+      ? [
+          {
+            key: 'control',
+            label: (
+              <div className="node-library-section-title">
+                <span>控制节点</span>
+                <Tag color="purple">{controlNodes.length}</Tag>
+              </div>
+            ),
+            children: (
+              <div className="space-y-2">
+                {controlNodes.map(renderNodeItem)}
+              </div>
+            ),
+          },
+        ]
+      : []),
   ];
 
   return (
@@ -116,12 +136,12 @@ const NodePanel = ({ onDragStart }: NodePanelProps) => {
         ) : (
           <>
             <Collapse
-              defaultActiveKey={['llm', 'tool']}
+              defaultActiveKey={['llm', 'tool', 'control']}
               ghost
               items={items}
               bordered={false}
             />
-            <div className="node-library-tip">输入 · 模型 · 工具 · 输出</div>
+            <div className="node-library-tip">输入 · 模型 · 工具 · 控制 · 输出</div>
           </>
         )}
       </div>

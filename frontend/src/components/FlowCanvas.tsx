@@ -33,6 +33,7 @@ type WorkflowNodeData = {
   inputParams?: unknown[];
   outputParams?: unknown[];
   maxSteps?: number;
+  conditions?: Array<{ id: string; field?: string; operator?: string; value?: string }>;
 };
 
 type WorkflowCardNode = Node<WorkflowNodeData, 'workflow'>;
@@ -59,6 +60,7 @@ const nodeMeta: Record<string, { icon: string; tone: string; caption: string }> 
   zhipu: { icon: 'ZP', tone: 'node-tone-blue', caption: 'ZhiPu' },
   ai_ping: { icon: 'AP', tone: 'node-tone-blue', caption: 'AIPing' },
   tts: { icon: 'TTS', tone: 'node-tone-amber', caption: 'Audio tool' },
+  condition: { icon: 'IF', tone: 'node-tone-orange', caption: 'Condition branch' },
 };
 
 const getNodeMeta = (type?: string) => (
@@ -71,6 +73,10 @@ const WorkflowNodeCard = ({ data, selected }: NodeProps<WorkflowCardNode>) => {
   const inputCount = Array.isArray(data.inputParams) ? data.inputParams.length : 0;
   const outputCount = Array.isArray(data.outputParams) ? data.outputParams.length : 0;
   const modelLabel = data.model || data.provider || data.skillName || meta.caption;
+
+  const isCondition = workflowType === 'condition';
+  const conditions = Array.isArray(data.conditions) ? data.conditions : [];
+  const handleCount = isCondition ? conditions.length + 1 : 0;
 
   return (
     <div className={`workflow-node ${selected ? 'is-selected' : ''}`}>
@@ -88,11 +94,45 @@ const WorkflowNodeCard = ({ data, selected }: NodeProps<WorkflowCardNode>) => {
           <div className="workflow-node-subtitle">{modelLabel}</div>
         </div>
       </div>
+      {isCondition && conditions.length > 0 && (
+        <div className="workflow-node-conditions">
+          {conditions.map((c, i) => (
+            <div key={c.id} className="workflow-node-condition-item">
+              <span className="condition-badge">{i + 1}</span>
+              <span className="condition-label">{c.field} {c.operator} {c.value}</span>
+            </div>
+          ))}
+          <div className="workflow-node-condition-item condition-default">
+            <span className="condition-badge default">D</span>
+            <span className="condition-label">否则(默认)</span>
+          </div>
+        </div>
+      )}
       <div className="workflow-node-footer">
         <span>{workflowType || 'node'}</span>
         <span>{inputCount} in / {outputCount} out</span>
       </div>
-      {workflowType !== 'output' && (
+      {workflowType === 'output' ? null : isCondition ? (
+        <>
+          {conditions.map((c, i) => (
+            <Handle
+              key={c.id}
+              type="source"
+              position={Position.Bottom}
+              id={c.id}
+              className="workflow-node-handle condition-handle"
+              style={{ left: `${((i + 1) / (handleCount + 1)) * 100}%` }}
+            />
+          ))}
+          <Handle
+            type="source"
+            position={Position.Bottom}
+            id="default"
+            className="workflow-node-handle condition-handle"
+            style={{ left: `${(handleCount / (handleCount + 1)) * 100}%` }}
+          />
+        </>
+      ) : (
         <Handle
           type="source"
           position={Position.Bottom}

@@ -306,7 +306,7 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
               name="apiUrl"
               label="API 地址"
               rules={[{ required: true, message: '请输入 API 地址' }]}
-              extra="填写接口根地址，不要追加具体接口路径。StepAudio 可填 https://api.stepfun.com/v1，通义 TTS 可填 https://dashscope.aliyuncs.com/api/v1。"
+              extra="填写接口根地址，不要追加具体接口路径。"
             >
               <Input placeholder="例如: https://api.openai.com, https://api.stepfun.com/v1" />
             </Form.Item>

@@ -7,6 +7,7 @@ import com.paiagent.engine.dag.DAGParser;
 import com.paiagent.engine.executor.NodeExecutor;
 import com.paiagent.engine.executor.NodeExecutorFactory;
 import com.paiagent.engine.model.WorkflowConfig;
+import com.paiagent.engine.model.WorkflowEdge;
 import com.paiagent.engine.model.WorkflowNode;
 import com.paiagent.entity.ExecutionRecord;
 import com.paiagent.entity.Workflow;
@@ -15,10 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.function.Consumer;
 
 @Slf4j
@@ -45,9 +43,19 @@ public class WorkflowEngine implements WorkflowExecutor {
         
         WorkflowConfig config = JSON.parseObject(workflow.getFlowData(), WorkflowConfig.class);
         List<WorkflowNode> sortedNodes = dagParser.parse(config);
+        List<WorkflowEdge> edges = config.getEdges() != null ? config.getEdges() : new ArrayList<>();
+        
+        // 构建边的索引
+        Map<String, List<WorkflowEdge>> edgesBySource = new HashMap<>();
+        Map<String, List<WorkflowEdge>> edgesByTarget = new HashMap<>();
+        for (WorkflowEdge edge : edges) {
+            edgesBySource.computeIfAbsent(edge.getSource(), k -> new ArrayList<>()).add(edge);
+            edgesByTarget.computeIfAbsent(edge.getTarget(), k -> new ArrayList<>()).add(edge);
+        }
         
         List<ExecutionResponse.NodeResult> nodeResults = new ArrayList<>();
         Map<String, Map<String, Object>> nodeOutputs = new HashMap<>();
+        Set<String> skippedNodes = new HashSet<>();
         
         Map<String, Object> currentInput = new HashMap<>();
         currentInput.put("input", inputData);
@@ -64,6 +72,15 @@ public class WorkflowEngine implements WorkflowExecutor {
             }
             
             for (WorkflowNode node : sortedNodes) {
+                // 跳过条件分支未选中的节点
+                if (skippedNodes.contains(node.getId())) {
+                    log.info("跳过节点 [{}]（条件分支未选中）", node.getId());
+                    continue;
+                }
+                
+                // 解析当前节点的输入
+                Map<String, Object> nodeInput = resolveNodeInput(node, nodeOutputs, edgesByTarget, currentInput);
+                
                 long nodeStartTime = System.currentTimeMillis();
                 
                 if (eventCallback != null) {
@@ -73,11 +90,11 @@ public class WorkflowEngine implements WorkflowExecutor {
                 ExecutionResponse.NodeResult nodeResult = new ExecutionResponse.NodeResult();
                 nodeResult.setNodeId(node.getId());
                 nodeResult.setNodeName(node.getType());
-                nodeResult.setInput(JSON.toJSONString(currentInput));
+                nodeResult.setInput(JSON.toJSONString(nodeInput));
                 
                 try {
                     NodeExecutor executor = executorFactory.getExecutor(node.getType());
-                    Map<String, Object> output = executor.execute(node, currentInput, eventCallback);
+                    Map<String, Object> output = executor.execute(node, nodeInput, eventCallback);
                     
                     nodeOutputs.put(node.getId(), output);
                     
@@ -90,13 +107,19 @@ public class WorkflowEngine implements WorkflowExecutor {
                     
                     if (eventCallback != null) {
                         Map<String, Object> eventData = new HashMap<>();
-                        eventData.put("input", currentInput);
+                        eventData.put("input", nodeInput);
                         eventData.put("output", output);
                         eventData.put("duration", nodeDuration);
                         eventCallback.accept(ExecutionEvent.nodeSuccess(node.getId(), node.getType(), eventData, nodeDuration));
                     }
                     
                     currentInput = output;
+                    
+                    // 条件分支路由
+                    if ("condition".equals(node.getType())) {
+                        String selectedBranch = (String) output.get("__selectedBranch__");
+                        markSkippedNodes(node.getId(), selectedBranch, edgesBySource, edgesByTarget, skippedNodes);
+                    }
                     
                 } catch (Exception e) {
                     log.error("节点执行失败: {}", node.getId(), e);
@@ -161,5 +184,102 @@ public class WorkflowEngine implements WorkflowExecutor {
     @Override
     public String getEngineType() {
         return "dag";
+    }
+    
+    /**
+     * 解析节点输入：如果存在已执行的前驱节点输出，使用前驱节点输出作为输入
+     */
+    private Map<String, Object> resolveNodeInput(WorkflowNode node,
+                                                   Map<String, Map<String, Object>> nodeOutputs,
+                                                   Map<String, List<WorkflowEdge>> edgesByTarget,
+                                                   Map<String, Object> fallbackInput) {
+        List<WorkflowEdge> incomingEdges = edgesByTarget.get(node.getId());
+        if (incomingEdges == null || incomingEdges.isEmpty()) {
+            return fallbackInput;
+        }
+        Map<String, Object> resolved = null;
+        for (WorkflowEdge edge : incomingEdges) {
+            Map<String, Object> sourceOutput = nodeOutputs.get(edge.getSource());
+            if (sourceOutput != null) {
+                resolved = sourceOutput;
+            }
+        }
+        return resolved != null ? resolved : fallbackInput;
+    }
+    
+    /**
+     * 标记条件分支中未选中路径的所有下游节点为跳过状态
+     */
+    private void markSkippedNodes(String conditionNodeId,
+                                   String selectedBranch,
+                                   Map<String, List<WorkflowEdge>> edgesBySource,
+                                   Map<String, List<WorkflowEdge>> edgesByTarget,
+                                   Set<String> skippedNodes) {
+        List<WorkflowEdge> outEdges = edgesBySource.get(conditionNodeId);
+        if (outEdges == null || outEdges.isEmpty()) {
+            return;
+        }
+        
+        // 判断出边是否使用了 sourceHandle（分支标识）
+        boolean hasHandles = outEdges.stream().anyMatch(e -> e.getSourceHandle() != null);
+        if (!hasHandles) {
+            return;
+        }
+        
+        // 收集活跃和非活跃分支的直接目标
+        Set<String> activeTargets = new HashSet<>();
+        Set<String> inactiveTargets = new HashSet<>();
+        
+        for (WorkflowEdge edge : outEdges) {
+            String handle = edge.getSourceHandle();
+            if (handle != null && handle.equals(selectedBranch)) {
+                activeTargets.add(edge.getTarget());
+            } else if (handle == null && "default".equals(selectedBranch)) {
+                activeTargets.add(edge.getTarget());
+            } else {
+                inactiveTargets.add(edge.getTarget());
+            }
+        }
+        
+        // 递归标记非活跃分支下游节点
+        for (String target : inactiveTargets) {
+            if (!activeTargets.contains(target)) {
+                markDownstreamSkipped(target, skippedNodes, edgesBySource, edgesByTarget);
+            }
+        }
+    }
+    
+    /**
+     * 递归标记下游节点为跳过。仅当节点所有入边都来自已跳过节点时才标记。
+     */
+    private void markDownstreamSkipped(String nodeId,
+                                        Set<String> skippedNodes,
+                                        Map<String, List<WorkflowEdge>> edgesBySource,
+                                        Map<String, List<WorkflowEdge>> edgesByTarget) {
+        if (skippedNodes.contains(nodeId)) {
+            return;
+        }
+        
+        // 检查是否所有入边的源节点都已被跳过（或尚无输出）
+        List<WorkflowEdge> incomingEdges = edgesByTarget.get(nodeId);
+        if (incomingEdges != null && incomingEdges.size() > 1) {
+            for (WorkflowEdge edge : incomingEdges) {
+                if (!skippedNodes.contains(edge.getSource())) {
+                    // 有活跃路径可达此节点，不跳过
+                    return;
+                }
+            }
+        }
+        
+        skippedNodes.add(nodeId);
+        log.info("标记节点 [{}] 为跳过（条件分支未选中路径）", nodeId);
+        
+        // 递归标记下游
+        List<WorkflowEdge> outEdges = edgesBySource.get(nodeId);
+        if (outEdges != null) {
+            for (WorkflowEdge edge : outEdges) {
+                markDownstreamSkipped(edge.getTarget(), skippedNodes, edgesBySource, edgesByTarget);
+            }
+        }
     }
 }

@@ -675,6 +675,54 @@ select {
   background: #2563eb !important;
 }
 
+.workflow-node-handle.condition-handle {
+  background: #ea580c !important;
+}
+
+.node-tone-orange {
+  background: #ea580c;
+}
+
+.workflow-node-conditions {
+  margin-top: 8px;
+  padding: 6px 0;
+  border-top: 1px solid #edf1f6;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.workflow-node-condition-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: #475569;
+}
+
+.workflow-node-condition-item .condition-badge {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 4px;
+  background: #ea580c;
+  color: #fff;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.workflow-node-condition-item .condition-badge.default {
+  background: #64748b;
+}
+
+.workflow-node-condition-item .condition-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .workflow-controls {
   overflow: hidden;
   border: 1px solid #dbe5f2;
