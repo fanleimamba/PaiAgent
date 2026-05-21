@@ -17,6 +17,7 @@ import java.util.Map;
  */
 @Component
 public class WorkflowConfigParser {
+    private static final String REACT_FLOW_NODE_TYPE = "workflow";
 
     public WorkflowConfig parse(String flowData) {
         JSONObject root = JSON.parseObject(flowData);
@@ -34,10 +35,11 @@ public class WorkflowConfigParser {
 
         for (Object item : array) {
             JSONObject json = (JSONObject) item;
+            JSONObject dataJson = json.getJSONObject("data");
             WorkflowNode node = new WorkflowNode();
             node.setId(json.getString("id"));
-            node.setType(json.getString("type"));
-            node.setData(parseMap(json.getJSONObject("data")));
+            node.setType(resolveNodeType(json, dataJson));
+            node.setData(parseMap(dataJson));
 
             JSONObject positionJson = json.getJSONObject("position");
             if (positionJson != null) {
@@ -50,6 +52,16 @@ public class WorkflowConfigParser {
             nodes.add(node);
         }
         return nodes;
+    }
+
+    private String resolveNodeType(JSONObject nodeJson, JSONObject dataJson) {
+        String nodeType = nodeJson.getString("type");
+        String dataType = dataJson != null ? dataJson.getString("type") : null;
+        if ((nodeType == null || nodeType.isBlank() || REACT_FLOW_NODE_TYPE.equals(nodeType))
+                && dataType != null && !dataType.isBlank()) {
+            return dataType;
+        }
+        return nodeType;
     }
 
     private List<WorkflowEdge> parseEdges(JSONArray array) {

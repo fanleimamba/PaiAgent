@@ -56,6 +56,32 @@ export interface ExecutionResponse {
   errorMessage?: string;
 }
 
+export interface ResumeExecutionRequest {
+  startNodeId?: string;
+  useSnapshotVariables?: boolean;
+  modifiedVariables?: Record<string, unknown>;
+  skipSuccessNodes?: boolean;
+}
+
+export interface ExecutionSnapshot {
+  id: number;
+  executionId: number;
+  flowId: number;
+  nodeId: string;
+  nodeType: string;
+  nodeName?: string;
+  status: 'PENDING' | 'RUNNING' | 'SUCCESS' | 'FAILED' | 'SKIPPED';
+  inputData?: Record<string, unknown>;
+  outputData?: Record<string, unknown>;
+  errorMessage?: string;
+  startedAt?: string;
+  completedAt?: string;
+  duration?: number;
+  retryCount?: number;
+  executionOrder?: number;
+  createdAt?: string;
+}
+
 /**
  * 获取所有节点类型
  */
@@ -110,6 +136,25 @@ export const executeWorkflow = (id: number, inputData: string): Promise<ApiResul
  */
 export const getLatestExecution = (id: number): Promise<ApiResult<ExecutionResponse | null>> => {
   return api.get(`/api/workflows/${id}/executions/latest`);
+};
+
+export const getExecutionSnapshots = (
+  id: number,
+  executionId: number
+): Promise<ApiResult<ExecutionSnapshot[]>> => {
+  return api.get(`/api/workflows/${id}/executions/${executionId}/snapshots`);
+};
+
+export const resumeWorkflowExecution = (
+  id: number,
+  executionId: number,
+  request: ResumeExecutionRequest = {}
+): Promise<ApiResult<ExecutionResponse>> => {
+  return api.post(`/api/workflows/${id}/executions/${executionId}/resume`, {
+    skipSuccessNodes: true,
+    useSnapshotVariables: true,
+    ...request,
+  });
 };
 
 export interface ExecutionEvent {

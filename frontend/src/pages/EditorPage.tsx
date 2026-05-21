@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Button, Input, Form, message, Checkbox, Select, Modal, List } from 'antd';
+import { Button, Input, Form, message, Checkbox, Select, Modal, List, Popconfirm } from 'antd';
 import { SaveOutlined, FolderOpenOutlined, BugOutlined, LogoutOutlined, PlusOutlined, DeleteOutlined, DatabaseOutlined, ApiOutlined } from '@ant-design/icons';
 import { Edge, MarkerType, Node } from '@xyflow/react';
 import NodePanel from '../components/NodePanel';
@@ -11,7 +11,7 @@ import { logout } from '../api/auth';
 import { useWorkflowStore } from '../store/workflowStore';
 import { useAuthStore } from '../store/authStore';
 import { useLLMConfigStore } from '../store/llmConfigStore';
-import { createWorkflow, updateWorkflow, executeWorkflow, getWorkflows, getWorkflow, Workflow } from '../api/workflow';
+import { createWorkflow, updateWorkflow, executeWorkflow, getWorkflows, getWorkflow, deleteWorkflow, Workflow } from '../api/workflow';
 import { getKnowledgeBases, KnowledgeBase } from '../api/knowledge';
 import { getMcpTools, McpToolConfig } from '../api/mcpTools';
 import { getRefreshToken } from '../utils/auth';
@@ -127,6 +127,7 @@ const EditorPage = () => {
   const [loadModalOpen, setLoadModalOpen] = useState(false);
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [loadingWorkflows, setLoadingWorkflows] = useState(false);
+  const [deletingWorkflowId, setDeletingWorkflowId] = useState<number | null>(null);
   const [knowledgeBases, setKnowledgeBases] = useState<KnowledgeBase[]>([]);
   const [mcpTools, setMcpTools] = useState<McpToolConfig[]>([]);
   const hasLoadedRef = useRef<number | null>(null);
@@ -710,6 +711,37 @@ const EditorPage = () => {
   const handleLoadWorkflow = (workflow: Workflow) => {
     setLoadModalOpen(false);
     navigate(`/editor/${workflow.id}`);
+  };
+
+  // 删除工作流
+  const handleDeleteWorkflow = async (workflow: Workflow) => {
+    setDeletingWorkflowId(workflow.id);
+    try {
+      const result = await deleteWorkflow(workflow.id);
+      if (result.code !== 200) {
+        message.error(result.message || '删除工作流失败');
+        return;
+      }
+
+      setWorkflows((current) => current.filter((item) => item.id !== workflow.id));
+      message.success('工作流已删除');
+
+      if (activeWorkflowId === workflow.id) {
+        hasLoadedRef.current = null;
+        setCurrentWorkflowId(null);
+        setWorkflowName('未命名工作流');
+        setEngineType('dag');
+        setOutputParams([]);
+        setResponseContent('');
+        setNodes(createDefaultWorkflowNodes());
+        setEdges([]);
+        navigate('/editor', { replace: true });
+      }
+    } catch {
+      message.error('删除工作流失败');
+    } finally {
+      setDeletingWorkflowId(null);
+    }
   };
 
   // 新建工作流
@@ -2718,7 +2750,24 @@ const EditorPage = () => {
               actions={[
                 <Button type="link" onClick={() => handleLoadWorkflow(workflow)}>
                   加载
-                </Button>
+                </Button>,
+                <Popconfirm
+                  title="删除工作流"
+                  description={`确定删除「${workflow.name}」吗?`}
+                  okText="删除"
+                  cancelText="取消"
+                  okButtonProps={{ danger: true, loading: deletingWorkflowId === workflow.id }}
+                  onConfirm={() => handleDeleteWorkflow(workflow)}
+                >
+                  <Button
+                    danger
+                    type="link"
+                    icon={<DeleteOutlined />}
+                    loading={deletingWorkflowId === workflow.id}
+                  >
+                    删除
+                  </Button>
+                </Popconfirm>
               ]}
             >
               <List.Item.Meta

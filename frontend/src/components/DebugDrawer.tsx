@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Drawer, Input, Button, Progress, Tag, Collapse, Alert } from 'antd';
-import { PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined } from '@ant-design/icons';
+import { PlayCircleOutlined, CheckCircleOutlined, CloseCircleOutlined, LoadingOutlined, ReloadOutlined } from '@ant-design/icons';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import AudioPlayer from './AudioPlayer';
@@ -11,6 +11,7 @@ import {
   ExecutionResponse as PersistedExecutionResponse,
   executeWorkflowStream,
   getLatestExecution,
+  resumeWorkflowExecution,
 } from '../api/workflow';
 
 const { TextArea } = Input;
@@ -451,17 +452,23 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
     return '';
   };
 
-  const restoreExecution = (result: PersistedExecutionResponse) => {
+  const toExecutionResult = (result: PersistedExecutionResponse) => {
     const restoredNodeResults = (result.nodeResults || []).map(normalizeNodeResult);
-    const restoredResult: ExecutionResponse = {
-      executionId: result.executionId,
-      status: result.status,
-      nodeResults: restoredNodeResults,
-      outputData: normalizeValue(result.outputData),
-      duration: result.duration || 0,
-      errorMessage: result.errorMessage,
+    return {
+      restoredNodeResults,
+      restoredResult: {
+        executionId: result.executionId,
+        status: result.status,
+        nodeResults: restoredNodeResults,
+        outputData: normalizeValue(result.outputData),
+        duration: result.duration || 0,
+        errorMessage: result.errorMessage,
+      } as ExecutionResponse,
     };
+  };
 
+  const restoreExecution = (result: PersistedExecutionResponse) => {
+    const { restoredNodeResults, restoredResult } = toExecutionResult(result);
     setInputData(extractInputText(result.inputData));
     setExecutionResult(restoredResult);
     setNodeStatusMap(new Map(restoredNodeResults.map((node) => [node.nodeId, node])));
@@ -479,6 +486,23 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
     ];
 
     setLogs(restoredLogs.map((message) => `[历史] ${message}`));
+  };
+
+  const applyExecutionResult = (result: PersistedExecutionResponse) => {
+    const { restoredNodeResults, restoredResult } = toExecutionResult(result);
+    setExecutionResult(restoredResult);
+    setNodeStatusMap(new Map(restoredNodeResults.map((node) => [node.nodeId, node])));
+  };
+
+  const syncLatestExecutionResult = async (targetWorkflowId: number) => {
+    try {
+      const result = await getLatestExecution(targetWorkflowId);
+      if (result.code === 200 && result.data) {
+        applyExecutionResult(result.data);
+      }
+    } catch (error) {
+      console.warn('同步最近一次执行记录失败:', error);
+    }
   };
 
   const addProgressLog = (event: ExecutionEvent) => {
@@ -563,6 +587,7 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
     try {
       const nodeResults: NodeResult[] = [];
       const tempNodeStatusMap = new Map<string, NodeResult>();
+      let activeExecutionId = 0;
       
       await executeWorkflowStream(
         workflowId,
@@ -572,6 +597,12 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
           
           switch (event.eventType) {
             case 'WORKFLOW_START':
+              if (typeof event.data === 'number') {
+                activeExecutionId = event.data;
+              } else if (typeof event.data === 'string') {
+                const parsedExecutionId = Number.parseInt(event.data, 10);
+                activeExecutionId = Number.isNaN(parsedExecutionId) ? 0 : parsedExecutionId;
+              }
               addLog('🚀 工作流开始执行');
               break;
               
@@ -645,13 +676,16 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
               addLog(`${event.status === 'SUCCESS' ? '✅' : '❌'} 工作流执行${event.status === 'SUCCESS' ? '成功' : '失败'},总耗时 ${formatDuration(totalDuration)}`);
               
               setExecutionResult({
-                executionId: 0,
+                executionId: activeExecutionId,
                 status: event.status as 'SUCCESS' | 'FAILED',
                 nodeResults: Array.from(tempNodeStatusMap.values()),
                 outputData: event.data || {},
                 duration: parseInt(totalDuration),
                 errorMessage: event.status === 'FAILED' ? event.message : undefined
               });
+              if (event.status === 'FAILED' && activeExecutionId === 0) {
+                syncLatestExecutionResult(workflowId);
+              }
               break;
             }
           }
@@ -669,6 +703,68 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
       );
     } catch (error) {
       addLog(`❌ 执行异常: ${error instanceof Error ? error.message : '未知错误'}`);
+      setExecuting(false);
+    }
+  };
+
+  const handleResume = async () => {
+    if (!workflowId || !executionResult?.executionId) {
+      addLog('❌ 错误: 缺少可恢复的执行记录');
+      return;
+    }
+
+    const failedNode = executionResult.nodeResults.find((node) => node.status === 'FAILED');
+    setExecuting(true);
+    addLog(`🔁 从执行记录 #${executionResult.executionId} 的失败断点继续执行...`);
+    if (failedNode) {
+      addLog(`📍 节点 [${failedNode.nodeName}] 重新执行...`);
+      setExecutionResult((current) => current
+        ? {
+            ...current,
+            status: 'RUNNING',
+            nodeResults: current.nodeResults.map((node) => (
+              node.nodeId === failedNode.nodeId
+                ? { ...node, status: 'RUNNING', error: undefined }
+                : node
+            )),
+          }
+        : current);
+      setNodeStatusMap((current) => {
+        const next = new Map(current);
+        const currentFailedNode = next.get(failedNode.nodeId);
+        if (currentFailedNode) {
+          next.set(failedNode.nodeId, {
+            ...currentFailedNode,
+            status: 'RUNNING',
+            error: undefined,
+          });
+        }
+        return next;
+      });
+    }
+
+    try {
+      const result = await resumeWorkflowExecution(workflowId, executionResult.executionId, {
+        skipSuccessNodes: true,
+        useSnapshotVariables: true,
+      });
+      if (result.code !== 200) {
+        throw new Error(result.message || '断点续执行失败');
+      }
+
+      applyExecutionResult(result.data);
+      const retriedFailedNode = (result.data.nodeResults || []).find((node) => node.status === 'FAILED');
+      if (result.data.status === 'SUCCESS') {
+        addLog(`✅ 断点续执行完成,状态: SUCCESS`);
+      } else {
+        addLog(`❌ 断点续执行完成,状态: FAILED`);
+        if (retriedFailedNode?.error) {
+          addLog(`❌ 节点 [${retriedFailedNode.nodeName}] 仍然失败: ${retriedFailedNode.error}`);
+        }
+      }
+    } catch (error) {
+      addLog(`❌ 断点续执行异常: ${error instanceof Error ? error.message : '未知错误'}`);
+    } finally {
       setExecuting(false);
     }
   };
@@ -774,6 +870,17 @@ const DebugDrawer = ({ open, workflowId, totalNodeCount, onClose }: DebugDrawerP
           >
             {executing ? '执行中...' : '执行工作流'}
           </Button>
+          {executionResult?.status === 'FAILED' && executionResult.executionId > 0 && (
+            <Button
+              icon={<ReloadOutlined />}
+              onClick={handleResume}
+              loading={executing}
+              block
+              className="debug-run-button"
+            >
+              从失败节点继续执行
+            </Button>
+          )}
         </section>
 
         {(executing || executionResult) && (
