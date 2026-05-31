@@ -22,6 +22,7 @@ const PROVIDERS = [
   { value: 'deepseek', label: 'DeepSeek' },
   { value: 'qwen', label: '通义千问' },
   { value: 'step', label: '阶跃星辰' },
+  { value: 'apifree', label: 'APIFree / SkyClaw' },
   { value: 'volcengine_agent_plan', label: '火山方舟 Agent Plan' }
 ];
 
@@ -245,7 +246,7 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
         )}
         {key === 'image' && (
           <Form.Item name="imageModel" label="默认图片模型" rules={[{ required: true, message: '请输入图片模型' }]}>
-            <Input placeholder="例如: seedream 相关图片生成模型" />
+            <Input placeholder="例如: step-image-edit-2, step-1x-medium, seedream 相关图片生成模型" />
           </Form.Item>
         )}
         {key === 'video' && (

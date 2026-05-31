@@ -12,6 +12,16 @@ const PROVIDER_ALIASES: Record<string, string> = {
   '智谱': 'zhipu',
   ai_ping: 'ai_ping',
   'ai ping': 'ai_ping',
+  apifree: 'apifree',
+  'api free': 'apifree',
+  'apifree.ai': 'apifree',
+  skyclaw: 'apifree',
+  'skyclaw-v1': 'apifree',
+  'skyclaw-v1.0': 'apifree',
+  'skyclaw-v1-lite': 'apifree',
+  'skyclaw-v1.0-lite': 'apifree',
+  'skywork-ai/skyclaw-v1': 'apifree',
+  'skywork-ai/skyclaw-v1-lite': 'apifree',
   volcengine: 'volcengine_agent_plan',
   ark: 'volcengine_agent_plan',
   agent_plan: 'volcengine_agent_plan',
@@ -26,6 +36,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   step: '阶跃星辰',
   zhipu: '智谱',
   ai_ping: 'AI Ping',
+  apifree: 'APIFree / SkyClaw',
   volcengine_agent_plan: '火山方舟 Agent Plan',
 };
 
@@ -36,6 +47,7 @@ export const SUPPORTED_LLM_PROVIDERS = [
   'step',
   'zhipu',
   'ai_ping',
+  'apifree',
   'volcengine_agent_plan',
 ] as const;
 

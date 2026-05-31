@@ -8,6 +8,8 @@ import org.springframework.ai.openai.OpenAiChatModel;
 import org.springframework.ai.openai.OpenAiChatOptions;
 import org.springframework.ai.openai.api.OpenAiApi;
 import org.springframework.ai.retry.RetryUtils;
+import org.springframework.http.MediaType;
+import org.springframework.http.converter.json.MappingJackson2HttpMessageConverter;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.reactive.function.client.WebClient;
@@ -30,7 +32,7 @@ public class ChatClientFactory {
     /**
      * 根据提供商和配置创建ChatClient
      *
-     * @param provider    提供商标识 (openai/deepseek/qwen/step/zhipu/ai_ping)
+     * @param provider    提供商标识 (openai/deepseek/qwen/step/zhipu/ai_ping/apifree)
      * @param apiUrl      API端点URL
      * @param apiKey      API密钥
      * @param model       模型名称
@@ -45,7 +47,7 @@ public class ChatClientFactory {
     /**
      * 创建带 Function Calling 支持的 ChatClient
      *
-     * @param provider    提供商标识 (openai/deepseek/qwen/step/zhipu/ai_ping)
+     * @param provider    提供商标识 (openai/deepseek/qwen/step/zhipu/ai_ping/apifree)
      * @param apiUrl      API端点URL
      * @param apiKey      API密钥
      * @param model       模型名称
@@ -57,14 +59,20 @@ public class ChatClientFactory {
                                                  String model, Double temperature,
                                                  List<FunctionCallback> functions) {
         String normalizedProvider = normalizeProvider(provider);
+        String normalizedModel = normalizeModel(normalizedProvider, model);
+        if (!normalizedModel.equals(model)) {
+            log.warn("检测到 {} 模型别名，已自动归一化: {} -> {}", normalizedProvider, model, normalizedModel);
+        }
         log.info("创建ChatClient - 类型: {}, URL: {}, 模型: {}, 温度: {}, 函数数量: {}",
-                normalizedProvider, apiUrl, model, temperature, functions.size());
+                normalizedProvider, apiUrl, normalizedModel, temperature, functions.size());
 
         ChatModel chatModel = switch (normalizedProvider) {
             case "openai", "deepseek", "qwen", "step", "zhipu", "ai_ping" ->
-                    createOpenAICompatibleModel(apiUrl, apiKey, model, temperature);
+                    createOpenAICompatibleModel(apiUrl, apiKey, normalizedModel, temperature);
+            case "apifree" ->
+                    createApifreeChatModel(apiUrl, apiKey, normalizedModel, temperature);
             case "volcengine_agent_plan" ->
-                    createVolcengineArkChatModel(apiUrl, apiKey, model, temperature);
+                    createVolcengineArkChatModel(apiUrl, apiKey, normalizedModel, temperature);
             default -> throw new IllegalArgumentException("不支持的提供商类型: " + provider);
         };
 
@@ -96,6 +104,33 @@ public class ChatClientFactory {
         OpenAiApi openAiApi = new OpenAiApi(normalizedApiUrl, apiKey);
 
         // 创建ChatModel并配置选项
+        OpenAiChatOptions options = OpenAiChatOptions.builder()
+                .model(model)
+                .temperature(temperature)
+                .build();
+
+        return new OpenAiChatModel(openAiApi, options);
+    }
+
+    /**
+     * APIFree 的 SkyClaw agent endpoint 有时会以 text/plain 返回 OpenAI 兼容 JSON。
+     * Spring AI 默认 JSON converter 不接收 text/plain，需要为 APIFree 单独放宽响应类型。
+     */
+    private ChatModel createApifreeChatModel(String apiUrl, String apiKey,
+                                             String model, Double temperature) {
+        String normalizedApiUrl = normalizeBaseUrl(apiUrl);
+        if (!normalizedApiUrl.equals(apiUrl)) {
+            log.warn("检测到 APIFree 兼容接口地址包含路径后缀，已自动归一化: {} -> {}", apiUrl, normalizedApiUrl);
+        }
+
+        OpenAiApi openAiApi = new OpenAiApi(
+                normalizedApiUrl,
+                apiKey,
+                createTextPlainJsonRestClientBuilder(),
+                WebClient.builder(),
+                RetryUtils.DEFAULT_RESPONSE_ERROR_HANDLER
+        );
+
         OpenAiChatOptions options = OpenAiChatOptions.builder()
                 .model(model)
                 .temperature(temperature)
@@ -167,6 +202,18 @@ public class ChatClientFactory {
         return value.substring(0, end);
     }
 
+    private RestClient.Builder createTextPlainJsonRestClientBuilder() {
+        MappingJackson2HttpMessageConverter textPlainJsonConverter = new MappingJackson2HttpMessageConverter();
+        textPlainJsonConverter.setSupportedMediaTypes(List.of(
+                MediaType.APPLICATION_JSON,
+                new MediaType("application", "*+json"),
+                MediaType.TEXT_PLAIN
+        ));
+
+        return RestClient.builder()
+                .messageConverters(converters -> converters.add(0, textPlainJsonConverter));
+    }
+
     private String normalizeProvider(String provider) {
         if (provider == null) {
             return "";
@@ -180,8 +227,28 @@ public class ChatClientFactory {
             case "stepfun", "阶跃星辰" -> "step";
             case "智谱" -> "zhipu";
             case "ai ping" -> "ai_ping";
+            case "api free", "apifree.ai", "skyclaw", "skyclaw-v1", "skyclaw-v1.0",
+                 "skyclaw-v1-lite", "skyclaw-v1.0-lite", "skywork-ai/skyclaw-v1",
+                 "skywork-ai/skyclaw-v1-lite" -> "apifree";
             case "volcengine", "ark", "agent_plan", "agent plan", "火山方舟" -> "volcengine_agent_plan";
             default -> normalized;
+        };
+    }
+
+    private String normalizeModel(String provider, String model) {
+        if (model == null) {
+            return "";
+        }
+
+        if (!"apifree".equals(provider)) {
+            return model;
+        }
+
+        String normalized = model.trim().toLowerCase(Locale.ROOT);
+        return switch (normalized) {
+            case "skyclaw", "skyclaw-v1", "skyclaw-v1.0" -> "skywork-ai/skyclaw-v1";
+            case "skyclaw-lite", "skyclaw-v1-lite", "skyclaw-v1.0-lite" -> "skywork-ai/skyclaw-v1-lite";
+            default -> model.trim();
         };
     }
 }

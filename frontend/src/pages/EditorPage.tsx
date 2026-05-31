@@ -1203,15 +1203,40 @@ const EditorPage = () => {
 
     return trimmedModel;
   };
-  const getGlobalConfigLabel = (config: { provider: string; model?: string; ttsModel?: string }) => {
+  const getGlobalConfigLabel = (config: { provider: string; model?: string; ttsModel?: string; imageModel?: string; videoModel?: string }) => {
     const providerLabel = getProviderLabel(config.provider);
     const modelLabel = config.model ? `LLM: ${config.model}` : '';
     const ttsModelLabel = config.ttsModel ? `TTS: ${config.ttsModel}` : '';
-    return [providerLabel, modelLabel, ttsModelLabel].filter(Boolean).join(' / ');
+    const imageModelLabel = config.imageModel ? `生图: ${config.imageModel}` : '';
+    const videoModelLabel = config.videoModel ? `生视频: ${config.videoModel}` : '';
+    return [providerLabel, modelLabel, ttsModelLabel, imageModelLabel, videoModelLabel].filter(Boolean).join(' / ');
   };
   const availableAgentPlanConfigs = llmGlobalConfigs.filter(
     (config) => normalizeProviderKey(config.provider) === 'volcengine_agent_plan'
   );
+  const imageGenerationProviderOptions = providerOptions.filter(option => ['volcengine_agent_plan', 'step'].includes(option.value));
+  const availableImageGenerateConfigs = llmGlobalConfigs.filter((config) => {
+    const provider = normalizeProviderKey(config.provider);
+    if (!['volcengine_agent_plan', 'step'].includes(provider)) {
+      return false;
+    }
+    return provider === 'volcengine_agent_plan' || !!config.imageModel;
+  });
+  const availableToolConfigs = selectedNodeType === 'image_generate'
+    ? availableImageGenerateConfigs
+    : availableAgentPlanConfigs;
+  const selectedToolProvider = normalizeProviderKey(String(selectedNode?.data?.provider || '')) || 'volcengine_agent_plan';
+  const selectedToolConfig = selectedNode?.data?.configId
+    ? llmGlobalConfigs.find(config => config.id === selectedNode.data?.configId)
+    : undefined;
+  const selectedImageModel = String(
+    selectedNode?.data?.model ||
+    selectedToolConfig?.imageModel ||
+    selectedToolConfig?.model ||
+    ''
+  );
+  const isStepImageEditModel = selectedToolProvider === 'step' && selectedImageModel === 'step-image-edit-2';
+  const getDefaultStepImageSize = (model?: string) => model === 'step-image-edit-2' ? '768x1360' : '1280x800';
   const updateSelectedNodeData = (patch: Record<string, unknown>) => {
     if (!selectedNode) return;
     const updatedData = { ...selectedNode.data, ...patch };
@@ -2250,64 +2275,97 @@ const EditorPage = () => {
 	                {/* Agent Plan / Harness 节点配置 */}
 	                {isAgentPlanNode && (
 	                  <Form layout="vertical" className="workflow-config-form">
-	                    <Form.Item label="Agent Plan 全局配置">
-	                      <Select
-	                        value={(selectedNode.data?.configId as number) || undefined}
-	                        placeholder="选择火山方舟 Agent Plan 配置"
-	                        allowClear
-	                        onChange={(value) => {
+                    <Form.Item label={selectedNodeType === 'image_generate' ? '图片生成全局配置' : 'Agent Plan 全局配置'}>
+                      <Select
+                        value={(selectedNode.data?.configId as number) || undefined}
+                        placeholder={selectedNodeType === 'image_generate' ? '选择火山方舟或阶跃星辰图片配置' : '选择火山方舟 Agent Plan 配置'}
+                        allowClear
+                        onChange={(value) => {
 	                          if (value) {
 	                            const config = llmGlobalConfigs.find(c => c.id === value);
+	                            const provider = config ? normalizeProviderKey(config.provider) : 'volcengine_agent_plan';
+                              const imageModel = config?.imageModel || config?.model || '';
 	                            updateSelectedNodeData({
-	                              provider: config ? normalizeProviderKey(config.provider) : 'volcengine_agent_plan',
+	                              provider,
 	                              configId: value,
 	                              apiUrl: config?.apiUrl || '',
 	                              apiKey: '',
-	                              model: ''
+	                              model: '',
+	                              size: provider === 'step' ? getDefaultStepImageSize(imageModel) : ((selectedNode.data?.size as string) || '2K'),
+                                steps: provider === 'step' && imageModel === 'step-image-edit-2' ? 8 : selectedNode.data?.steps,
+                                cfgScale: provider === 'step' && imageModel === 'step-image-edit-2' ? 1 : selectedNode.data?.cfgScale,
+                                textMode: provider === 'step' && imageModel === 'step-image-edit-2' ? true : selectedNode.data?.textMode
 	                            });
-	                          } else {
-	                            updateSelectedNodeData({
-	                              provider: 'volcengine_agent_plan',
-	                              configId: undefined,
-	                              apiUrl: '',
-	                              apiKey: '',
-	                              model: ''
+                          } else {
+                            updateSelectedNodeData({
+                              provider: selectedNodeType === 'image_generate' ? selectedToolProvider : 'volcengine_agent_plan',
+                              configId: undefined,
+                              apiUrl: '',
+                              apiKey: '',
+                              model: ''
 	                            });
 	                          }
-	                        }}
-	                      >
-	                        {availableAgentPlanConfigs.map(config => (
-	                          <Select.Option key={config.id} value={config.id}>
-	                            {getGlobalConfigLabel(config)}
-	                          </Select.Option>
-	                        ))}
+                        }}
+                      >
+                        {availableToolConfigs.map(config => (
+                          <Select.Option key={config.id} value={config.id}>
+                            {getGlobalConfigLabel(config)}
+                          </Select.Option>
+                        ))}
 	                      </Select>
-                      <div className="workflow-field-hint">
-                        Agent Plan 提供 Doubao-embedding-vision 记忆召回，以及图片和视频生成能力。
-                      </div>
 	                    </Form.Item>
 
-	                    {!selectedNode.data?.configId && (
-	                      <>
-	                        <Form.Item label="API 地址">
-	                          <Input
-	                            placeholder="https://ark.cn-beijing.volces.com/api/plan/v3"
-	                            value={(selectedNode.data?.apiUrl as string) || ''}
-	                            onChange={(e) => updateSelectedNodeData({ provider: 'volcengine_agent_plan', apiUrl: e.target.value })}
-	                          />
-	                        </Form.Item>
+                    {!selectedNode.data?.configId && (
+                      <>
+                        {selectedNodeType === 'image_generate' && (
+                          <Form.Item label="供应商">
+                            <Select
+                              value={selectedToolProvider}
+                              options={imageGenerationProviderOptions}
+	                              onChange={(value) => updateSelectedNodeData({
+	                                provider: value,
+	                                apiUrl: value === 'step' ? 'https://api.stepfun.com/v1' : '',
+	                                model: '',
+	                                size: value === 'step' ? '1280x800' : '2K'
+	                              })}
+                            />
+                          </Form.Item>
+                        )}
+                        <Form.Item label="API 地址">
+                          <Input
+                            placeholder={selectedNodeType === 'image_generate' && selectedToolProvider === 'step'
+                              ? (isStepImageEditModel ? 'https://api.stepfun.com/step_plan/v1' : 'https://api.stepfun.com/v1')
+                              : 'https://ark.cn-beijing.volces.com/api/plan/v3'}
+                            value={(selectedNode.data?.apiUrl as string) || ''}
+                            onChange={(e) => updateSelectedNodeData({
+                              provider: selectedNodeType === 'image_generate' ? selectedToolProvider : 'volcengine_agent_plan',
+                              apiUrl: e.target.value
+                            })}
+                          />
+                        </Form.Item>
 	                        <Form.Item label="API Key">
 	                          <Input.Password
 	                            value={(selectedNode.data?.apiKey as string) || ''}
 	                            onChange={(e) => updateSelectedNodeData({ apiKey: e.target.value })}
 	                          />
 	                        </Form.Item>
-	                        <Form.Item label="模型覆盖">
-	                          <Input
-	                            placeholder="可选。为空时使用全局配置里的对应模型"
-	                            value={(selectedNode.data?.model as string) || ''}
-	                            onChange={(e) => updateSelectedNodeData({ model: e.target.value })}
-	                          />
+                        <Form.Item label="模型覆盖">
+                          <Input
+                            placeholder={selectedNodeType === 'image_generate' && selectedToolProvider === 'step'
+                              ? '可选，例如 step-image-edit-2 或 step-1x-medium'
+                              : '可选。为空时使用全局配置里的对应模型'}
+                            value={(selectedNode.data?.model as string) || ''}
+                            onChange={(e) => {
+                              const model = e.target.value.trim();
+                              updateSelectedNodeData({
+                                model,
+                                size: selectedToolProvider === 'step' && model ? getDefaultStepImageSize(model) : selectedNode.data?.size,
+                                steps: selectedToolProvider === 'step' && model === 'step-image-edit-2' ? 8 : selectedNode.data?.steps,
+                                cfgScale: selectedToolProvider === 'step' && model === 'step-image-edit-2' ? 1 : selectedNode.data?.cfgScale,
+                                textMode: selectedToolProvider === 'step' && model === 'step-image-edit-2' ? true : selectedNode.data?.textMode
+                              });
+                            }}
+                          />
 	                        </Form.Item>
 	                      </>
 	                    )}
@@ -2505,12 +2563,83 @@ const EditorPage = () => {
 	                          />
 	                        </Form.Item>
 	                        <Form.Item label="尺寸">
-	                          <Input
-	                            placeholder="2K"
-	                            value={(selectedNode.data?.size as string) || '2K'}
-	                            onChange={(e) => updateSelectedNodeData({ size: e.target.value })}
-	                          />
+	                          {selectedToolProvider === 'step' ? (
+	                            <Select
+	                              value={(selectedNode.data?.size as string) || getDefaultStepImageSize(selectedImageModel)}
+	                              onChange={(value) => updateSelectedNodeData({ size: value })}
+	                              options={isStepImageEditModel ? [
+	                                { value: '768x1360', label: '768x1360 横版' },
+	                                { value: '896x1184', label: '896x1184 横版' },
+	                                { value: '1024x1024', label: '1024x1024 方图' },
+	                                { value: '1184x896', label: '1184x896 竖版' },
+	                                { value: '1360x768', label: '1360x768 竖版' }
+	                              ] : [
+	                                { value: '1280x800', label: '1280x800 横版' },
+	                                { value: '1024x1024', label: '1024x1024 方图' },
+	                                { value: '800x1280', label: '800x1280 竖版' },
+	                                { value: '768x768', label: '768x768 方图' },
+	                                { value: '512x512', label: '512x512 方图' }
+	                              ]}
+	                            />
+	                          ) : (
+	                            <Input
+	                              placeholder="2K"
+	                              value={(selectedNode.data?.size as string) || '2K'}
+	                              onChange={(e) => updateSelectedNodeData({ size: e.target.value })}
+	                            />
+	                          )}
 	                        </Form.Item>
+	                        {selectedToolProvider === 'step' && (
+	                          <>
+	                            <Form.Item label="生成步数">
+	                              <Input
+	                                type="number"
+	                                min="1"
+	                                max="50"
+	                                value={(selectedNode.data?.steps as number) || (isStepImageEditModel ? 8 : 50)}
+	                                onChange={(e) => updateSelectedNodeData({ steps: parseInt(e.target.value, 10) || (isStepImageEditModel ? 8 : 50) })}
+	                              />
+	                            </Form.Item>
+	                            <Form.Item label="提示词遵循度">
+	                              <Input
+	                                type="number"
+	                                step="0.1"
+	                                min="1"
+	                                max="10"
+	                                value={(selectedNode.data?.cfgScale as number) || (isStepImageEditModel ? 1 : 7.5)}
+	                                onChange={(e) => updateSelectedNodeData({ cfgScale: parseFloat(e.target.value) || (isStepImageEditModel ? 1 : 7.5) })}
+	                              />
+	                            </Form.Item>
+	                            <Form.Item label="随机种子">
+	                              <Input
+	                                type="number"
+	                                placeholder="可选；为空时随机"
+	                                value={(selectedNode.data?.seed as number) || undefined}
+	                                onChange={(e) => updateSelectedNodeData({ seed: e.target.value ? parseInt(e.target.value, 10) : undefined })}
+	                              />
+	                            </Form.Item>
+	                            {isStepImageEditModel && (
+	                              <>
+	                                <Form.Item label="文字优化模式">
+	                                  <Checkbox
+	                                    checked={(selectedNode.data?.textMode as boolean | undefined) ?? true}
+	                                    onChange={(e) => updateSelectedNodeData({ textMode: e.target.checked })}
+	                                  >
+	                                    开启
+	                                  </Checkbox>
+	                                </Form.Item>
+	                                <Form.Item label="负面约束">
+	                                  <Input.TextArea
+	                                    rows={2}
+	                                    placeholder="例如：低清晰度、变形、多余文字、水印、Logo"
+	                                    value={(selectedNode.data?.negativePrompt as string) || ''}
+	                                    onChange={(e) => updateSelectedNodeData({ negativePrompt: e.target.value })}
+	                                  />
+	                                </Form.Item>
+	                              </>
+	                            )}
+	                          </>
+	                        )}
 	                        <div className="workflow-config-section">
 	                          <div className="workflow-config-section-header">
 	                            <label className="font-medium text-gray-700">输出配置</label>

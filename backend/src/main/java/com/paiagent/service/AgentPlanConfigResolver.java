@@ -79,6 +79,59 @@ public class AgentPlanConfigResolver {
         );
     }
 
+    public ResolvedAgentPlanConfig resolveImageConfig(WorkflowNode node) {
+        Map<String, Object> data = node.getData();
+        Long nodeConfigId = parseLong(data.get("configId"));
+        LLMGlobalConfig globalConfig = nodeConfigId != null ? llmGlobalConfigService.getById(nodeConfigId) : null;
+
+        String configuredProvider = canonicalizeProvider(trim(data.get("provider")));
+        if (globalConfig == null) {
+            globalConfig = resolveDefaultImageConfig(configuredProvider);
+        }
+
+        String nodeModel = trim(data.get("model"));
+        String apiUrl = firstText(globalConfig != null ? globalConfig.getApiUrl() : null, trim(data.get("apiUrl")));
+        String apiKey = firstText(globalConfig != null ? globalConfig.getApiKey() : null, trim(data.get("apiKey")));
+        String provider = canonicalizeProvider(firstText(
+                globalConfig != null ? globalConfig.getProvider() : null,
+                configuredProvider,
+                "volcengine_agent_plan"
+        ));
+        String languageModel = firstText(nodeModel, globalConfig != null ? globalConfig.getModel() : null);
+        String imageModel = firstText(
+                nodeModel,
+                globalConfig != null ? globalConfig.getImageModel() : null,
+                languageModel
+        );
+
+        return new ResolvedAgentPlanConfig(
+                globalConfig != null ? globalConfig.getId() : null,
+                provider,
+                apiUrl,
+                apiKey,
+                imageModel,
+                globalConfig != null ? globalConfig.getEmbeddingModel() : null,
+                imageModel,
+                globalConfig != null ? globalConfig.getVideoModel() : null,
+                globalConfig != null && globalConfig.getMemoryEnabled() != null && globalConfig.getMemoryEnabled() == 1
+        );
+    }
+
+    private LLMGlobalConfig resolveDefaultImageConfig(String configuredProvider) {
+        if (StringUtils.hasText(configuredProvider)) {
+            LLMGlobalConfig providerDefault = llmGlobalConfigService.getDefaultConfig(configuredProvider);
+            if (providerDefault != null) {
+                return providerDefault;
+            }
+        }
+
+        LLMGlobalConfig defaultAgentPlan = llmGlobalConfigService.getDefaultConfig("volcengine_agent_plan");
+        if (defaultAgentPlan != null) {
+            return defaultAgentPlan;
+        }
+        return llmGlobalConfigService.getDefaultConfig("step");
+    }
+
     private LLMGlobalConfig resolveAgentPlanConfig(Long explicitAgentPlanConfigId, LLMGlobalConfig nodeGlobalConfig) {
         if (explicitAgentPlanConfigId != null) {
             LLMGlobalConfig explicit = llmGlobalConfigService.getById(explicitAgentPlanConfigId);

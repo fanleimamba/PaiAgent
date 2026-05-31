@@ -141,7 +141,7 @@ INSERT INTO node_definition (node_type, display_name, category, icon, input_sche
 -- 全局模型配置表（LLM 与 TTS 共用）
 CREATE TABLE IF NOT EXISTS llm_global_config (
     id BIGINT AUTO_INCREMENT PRIMARY KEY COMMENT '配置主键 ID',
-    provider VARCHAR(50) NOT NULL COMMENT '提供商: openai/deepseek/qwen/step/zhipu/ai_ping',
+    provider VARCHAR(50) NOT NULL COMMENT '提供商: openai/deepseek/qwen/step/zhipu/ai_ping/apifree',
     config_name VARCHAR(100) NOT NULL COMMENT '配置名称',
     api_url VARCHAR(255) NOT NULL COMMENT 'API地址',
     api_key TEXT NOT NULL COMMENT 'API密钥',

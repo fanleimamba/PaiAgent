@@ -298,7 +298,6 @@ class VideoGenerateNodeExecutorTest {
         doReturn(null).when(spyExecutor).stringData(eq(node), eq("resolution"), any());
         doReturn("adaptive").when(spyExecutor).stringData(eq(node), eq("ratio"), any());
         doReturn(null).when(spyExecutor).stringData(eq(node), eq("cameraMotion"), any());
-        doReturn("http://minio.url/video.mp4").when(spyExecutor).persistMedia(anyString(), anyString(), anyString());
         doNothing().when(spyExecutor).applyOutputParams(eq(node), anyMap());
         // Act
         Map<String, Object> result = spyExecutor.execute(node, input, progressCallback);
@@ -409,11 +408,8 @@ class VideoGenerateNodeExecutorTest {
         when(agentPlanClient.createVideoTask(any(), anyString(), any(), anyInt(), any(), any(), any())).thenReturn("task-minio-fail");
         Map<String, Object> successTask = Map.of("status", "success", "videoUrl", "http://original.url/video.mp4");
         when(agentPlanClient.getVideoTask(mockConfig, "task-minio-fail")).thenReturn(successTask);
-        // Simulate MinIO failure
-        doReturn("http://original.url/video.mp4").when(spyExecutor).persistMedia(anyString(), anyString(), anyString());
-        // Or mock the internal call if persistMedia was not protected:
-        // when(minioService.uploadFromUrl(...)).thenThrow(new RuntimeException("MinIO down"));
-        // But since persistMedia handles exception internally and returns sourceUrl, we test that logic path.
+        when(minioService.uploadFromUrl(anyString(), anyString(), anyString()))
+                .thenThrow(new RuntimeException("MinIO down"));
         // Act
         Map<String, Object> result = spyExecutor.execute(node, input, progressCallback);
         // Assert

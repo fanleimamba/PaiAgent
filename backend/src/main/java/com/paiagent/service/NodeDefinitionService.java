@@ -61,7 +61,7 @@ public class NodeDefinitionService extends ServiceImpl<NodeDefinitionMapper, Nod
                 "image_generate", "图片生成", "TOOL", "IMG",
                 "{\"type\":\"object\",\"properties\":{\"prompt\":{\"type\":\"string\"}}}",
                 "{\"type\":\"object\",\"properties\":{\"imageUrl\":{\"type\":\"string\"},\"imageUrls\":{\"type\":\"array\"},\"prompt\":{\"type\":\"string\"},\"model\":{\"type\":\"string\"},\"metadata\":{\"type\":\"object\"}}}",
-                "{\"type\":\"object\",\"properties\":{\"configId\":{\"type\":\"number\"},\"prompt\":{\"type\":\"string\"},\"model\":{\"type\":\"string\"},\"referenceImageUrl\":{\"type\":\"string\"},\"size\":{\"type\":\"string\",\"default\":\"2K\"},\"style\":{\"type\":\"string\"},\"count\":{\"type\":\"number\",\"default\":1},\"negativePrompt\":{\"type\":\"string\"}}}"
+                "{\"type\":\"object\",\"properties\":{\"configId\":{\"type\":\"number\"},\"prompt\":{\"type\":\"string\"},\"model\":{\"type\":\"string\"},\"referenceImageUrl\":{\"type\":\"string\"},\"size\":{\"type\":\"string\",\"default\":\"1024x1024\"},\"style\":{\"type\":\"string\"},\"count\":{\"type\":\"number\",\"default\":1},\"negativePrompt\":{\"type\":\"string\"},\"steps\":{\"type\":\"number\"},\"cfgScale\":{\"type\":\"number\"},\"seed\":{\"type\":\"number\"},\"textMode\":{\"type\":\"boolean\",\"default\":true}}}"
         ));
         nodeDefinitionMap.putIfAbsent("video_generate", createNodeDefinition(
                 "video_generate", "视频生成", "TOOL", "VID",

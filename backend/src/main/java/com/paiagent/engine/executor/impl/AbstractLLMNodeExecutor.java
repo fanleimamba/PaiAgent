@@ -541,6 +541,9 @@ public abstract class AbstractLLMNodeExecutor implements NodeExecutor {
             case "通义千问" -> "qwen";
             case "智谱" -> "zhipu";
             case "ai ping" -> "ai_ping";
+            case "api free", "apifree.ai", "skyclaw", "skyclaw-v1", "skyclaw-v1.0",
+                 "skyclaw-v1-lite", "skyclaw-v1.0-lite", "skywork-ai/skyclaw-v1",
+                 "skywork-ai/skyclaw-v1-lite" -> "apifree";
             case "volcengine", "ark", "agent_plan", "agent plan", "火山方舟" -> "volcengine_agent_plan";
             default -> normalized;
         };
