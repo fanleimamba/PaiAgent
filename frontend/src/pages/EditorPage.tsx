@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { Button, Input, Form, message, Checkbox, Select, Modal, List, Popconfirm } from 'antd';
-import { SaveOutlined, FolderOpenOutlined, BugOutlined, LogoutOutlined, PlusOutlined, DeleteOutlined, DatabaseOutlined, ApiOutlined } from '@ant-design/icons';
+import { Button, Input, Form, message, Checkbox, Select, Modal, List, Popconfirm, Upload } from 'antd';
+import { SaveOutlined, FolderOpenOutlined, BugOutlined, LogoutOutlined, PlusOutlined, DeleteOutlined, DatabaseOutlined, ApiOutlined, UploadOutlined } from '@ant-design/icons';
 import { Edge, MarkerType, Node } from '@xyflow/react';
 import NodePanel from '../components/NodePanel';
 import FlowCanvas from '../components/FlowCanvas';
@@ -14,6 +14,7 @@ import { useLLMConfigStore } from '../store/llmConfigStore';
 import { createWorkflow, updateWorkflow, executeWorkflow, getWorkflows, getWorkflow, deleteWorkflow, Workflow } from '../api/workflow';
 import { getKnowledgeBases, KnowledgeBase } from '../api/knowledge';
 import { getMcpTools, McpToolConfig } from '../api/mcpTools';
+import { uploadWorkflowImage } from '../api/media';
 import { getRefreshToken } from '../utils/auth';
 import {
   getProviderFromNodeType,
@@ -160,7 +161,20 @@ const EditorPage = () => {
 
   // LLM 全局配置 Store
   const { configs: llmGlobalConfigs, fetchAllConfigs: fetchLLMGlobalConfigs } = useLLMConfigStore();
-  const providerOptions = getSupportedProviderOptions();
+  const providerOptions = Array.from(
+    new Map(
+      [
+        ...getSupportedProviderOptions(),
+        ...llmGlobalConfigs.map((config) => {
+          const provider = normalizeProviderKey(config.provider);
+          return {
+            value: provider,
+            label: getProviderLabel(provider)
+          };
+        })
+      ].map((option) => [option.value, option])
+    ).values()
+  );
 
   const buildRuntimeToolSelection = (tools: string[], mcpToolIds: string[]) => {
     const selected = new Set(expandAgentToolSelection(tools));
@@ -1214,17 +1228,20 @@ const EditorPage = () => {
   const availableAgentPlanConfigs = llmGlobalConfigs.filter(
     (config) => normalizeProviderKey(config.provider) === 'volcengine_agent_plan'
   );
-  const imageGenerationProviderOptions = providerOptions.filter(option => ['volcengine_agent_plan', 'step'].includes(option.value));
+  const imageGenerationProviderOptions = providerOptions;
   const availableImageGenerateConfigs = llmGlobalConfigs.filter((config) => {
     const provider = normalizeProviderKey(config.provider);
-    if (!['volcengine_agent_plan', 'step'].includes(provider)) {
-      return false;
-    }
     return provider === 'volcengine_agent_plan' || !!config.imageModel;
+  });
+  const availableVideoGenerateConfigs = llmGlobalConfigs.filter((config) => {
+    const provider = normalizeProviderKey(config.provider);
+    return provider === 'volcengine_agent_plan' || !!config.videoModel;
   });
   const availableToolConfigs = selectedNodeType === 'image_generate'
     ? availableImageGenerateConfigs
-    : availableAgentPlanConfigs;
+    : selectedNodeType === 'video_generate'
+      ? availableVideoGenerateConfigs
+      : availableAgentPlanConfigs;
   const selectedToolProvider = normalizeProviderKey(String(selectedNode?.data?.provider || '')) || 'volcengine_agent_plan';
   const selectedToolConfig = selectedNode?.data?.configId
     ? llmGlobalConfigs.find(config => config.id === selectedNode.data?.configId)
@@ -1242,6 +1259,28 @@ const EditorPage = () => {
     const updatedData = { ...selectedNode.data, ...patch };
     useWorkflowStore.getState().updateNode(selectedNode.id, updatedData);
     useWorkflowStore.getState().setSelectedNode({ ...selectedNode, data: updatedData });
+  };
+  const handleReferenceImageUpload = async (file: File) => {
+    if (!file.type.startsWith('image/')) {
+      message.warning('请选择图片文件');
+      return;
+    }
+    if (file.size > 10 * 1024 * 1024) {
+      message.warning('图片大小不能超过 10MB');
+      return;
+    }
+
+    try {
+      const result = await uploadWorkflowImage(file);
+      if (result.code === 200 && result.data?.url) {
+        updateSelectedNodeData({ referenceImageUrl: result.data.url });
+        message.success('原图上传成功');
+      } else {
+        message.error(result.message || '原图上传失败');
+      }
+    } catch (error: any) {
+      message.error(error?.message || '原图上传失败');
+    }
   };
   const getAgentPlanInputParams = () => (
     Array.isArray(selectedNode?.data?.inputParams)
@@ -2275,27 +2314,30 @@ const EditorPage = () => {
 	                {/* Agent Plan / Harness 节点配置 */}
 	                {isAgentPlanNode && (
 	                  <Form layout="vertical" className="workflow-config-form">
-                    <Form.Item label={selectedNodeType === 'image_generate' ? '图片生成全局配置' : 'Agent Plan 全局配置'}>
+                    <Form.Item label={selectedNodeType === 'image_generate' ? '图片生成全局配置' : selectedNodeType === 'video_generate' ? '视频生成全局配置' : 'Agent Plan 全局配置'}>
                       <Select
                         value={(selectedNode.data?.configId as number) || undefined}
-                        placeholder={selectedNodeType === 'image_generate' ? '选择火山方舟或阶跃星辰图片配置' : '选择火山方舟 Agent Plan 配置'}
+                        placeholder={selectedNodeType === 'image_generate' ? '选择带图片能力的全局配置' : selectedNodeType === 'video_generate' ? '选择带视频能力的全局配置' : '选择火山方舟 Agent Plan 配置'}
                         allowClear
                         onChange={(value) => {
 	                          if (value) {
 	                            const config = llmGlobalConfigs.find(c => c.id === value);
 	                            const provider = config ? normalizeProviderKey(config.provider) : 'volcengine_agent_plan';
                               const imageModel = config?.imageModel || config?.model || '';
-	                            updateSelectedNodeData({
+	                            const nextData: Record<string, unknown> = {
 	                              provider,
 	                              configId: value,
 	                              apiUrl: config?.apiUrl || '',
 	                              apiKey: '',
-	                              model: '',
-	                              size: provider === 'step' ? getDefaultStepImageSize(imageModel) : ((selectedNode.data?.size as string) || '2K'),
-                                steps: provider === 'step' && imageModel === 'step-image-edit-2' ? 8 : selectedNode.data?.steps,
-                                cfgScale: provider === 'step' && imageModel === 'step-image-edit-2' ? 1 : selectedNode.data?.cfgScale,
-                                textMode: provider === 'step' && imageModel === 'step-image-edit-2' ? true : selectedNode.data?.textMode
-	                            });
+	                              model: ''
+	                            };
+                              if (selectedNodeType === 'image_generate') {
+                                nextData.size = provider === 'step' ? getDefaultStepImageSize(imageModel) : ((selectedNode.data?.size as string) || '2K');
+                                nextData.steps = provider === 'step' && imageModel === 'step-image-edit-2' ? 8 : selectedNode.data?.steps;
+                                nextData.cfgScale = provider === 'step' && imageModel === 'step-image-edit-2' ? 1 : selectedNode.data?.cfgScale;
+                                nextData.textMode = provider === 'step' && imageModel === 'step-image-edit-2' ? true : selectedNode.data?.textMode;
+                              }
+	                            updateSelectedNodeData(nextData);
                           } else {
                             updateSelectedNodeData({
                               provider: selectedNodeType === 'image_generate' ? selectedToolProvider : 'volcengine_agent_plan',
@@ -2545,22 +2587,36 @@ const EditorPage = () => {
 	                            </div>
 	                          )}
 	                        </div>
-	                        <Form.Item label="图片提示词">
-	                          <Input.TextArea
-	                            rows={5}
-	                            placeholder={`例如：生成一张科技媒体风格的公众号封面图，主体是一位年轻程序员坐在双屏电脑前，屏幕上有 AI 工作流节点和代码界面，环境是现代办公室，蓝白色科技感光效，画面干净，高级感，16:9，高清，避免文字、水印、畸形手指。`}
-	                            value={(selectedNode.data?.prompt as string) || ''}
-	                            onChange={(e) => updateSelectedNodeData({ prompt: e.target.value })}
-	                          />
-	                          <div className="workflow-field-hint">
-	                            可写主体、场景、风格、构图、比例、质量要求和负面约束；如果上方输入配置里定义了 prompt 引用，会优先使用引用内容。
-	                          </div>
-	                        </Form.Item>
-	                        <Form.Item label="参考图 URL">
-	                          <Input
-	                            value={(selectedNode.data?.referenceImageUrl as string) || ''}
-	                            onChange={(e) => updateSelectedNodeData({ referenceImageUrl: e.target.value })}
-	                          />
+	                        <Form.Item label="原图">
+                            <div className="workflow-param-row">
+	                            <Input
+                                className="flex-1"
+                                placeholder="粘贴需要改造的原图 URL，或上传一张原图"
+	                              value={(selectedNode.data?.referenceImageUrl as string) || ''}
+	                              onChange={(e) => updateSelectedNodeData({ referenceImageUrl: e.target.value })}
+	                            />
+                              <Upload
+                                accept="image/*"
+                                showUploadList={false}
+                                beforeUpload={(file) => {
+                                  void handleReferenceImageUpload(file);
+                                  return Upload.LIST_IGNORE;
+                                }}
+                              >
+                                <Button icon={<UploadOutlined />}>上传原图</Button>
+                              </Upload>
+                            </div>
+                            {Boolean(selectedNode.data?.referenceImageUrl) && (
+                              <div className="workflow-reference-image-preview">
+                                <img
+                                  src={selectedNode.data.referenceImageUrl as string}
+                                  alt="参考图预览"
+                                />
+                              </div>
+                            )}
+	                            <div className="workflow-field-hint">
+	                              填入或上传原图后，图片生成会按图生图执行；留空则按文生图执行。参考风格、构图等要求请写在提示词里。
+	                            </div>
 	                        </Form.Item>
 	                        <Form.Item label="尺寸">
 	                          {selectedToolProvider === 'step' ? (
@@ -2759,22 +2815,36 @@ const EditorPage = () => {
 	                            </div>
 	                          )}
 	                        </div>
-	                        <Form.Item label="视频提示词">
-	                          <Input.TextArea
-	                            rows={5}
-	                            placeholder="例如：一位程序员在现代办公室内操作 AI 工作流系统，屏幕上节点流转发光，镜头缓慢推进，真实摄影风格，柔和自然光，画面稳定，高清，无文字水印。"
-	                            value={(selectedNode.data?.prompt as string) || ''}
-	                            onChange={(e) => updateSelectedNodeData({ prompt: e.target.value })}
-	                          />
+	                        <Form.Item label="首帧">
+                            <div className="workflow-param-row">
+	                            <Input
+                                className="flex-1"
+                                placeholder="粘贴用于图生视频的首帧 URL，或上传一张首帧图"
+	                              value={(selectedNode.data?.referenceImageUrl as string) || ''}
+	                              onChange={(e) => updateSelectedNodeData({ referenceImageUrl: e.target.value })}
+	                            />
+                              <Upload
+                                accept="image/*"
+                                showUploadList={false}
+                                beforeUpload={(file) => {
+                                  void handleReferenceImageUpload(file);
+                                  return Upload.LIST_IGNORE;
+                                }}
+                              >
+                                <Button icon={<UploadOutlined />}>上传首帧</Button>
+                              </Upload>
+                            </div>
+                            {Boolean(selectedNode.data?.referenceImageUrl) && (
+                              <div className="workflow-reference-image-preview">
+                                <img
+                                  src={selectedNode.data.referenceImageUrl as string}
+                                  alt="首帧预览"
+                                />
+                              </div>
+                            )}
 	                          <div className="workflow-field-hint">
-	                            如果上方输入配置里定义了 prompt 引用，会优先使用引用内容。
+	                            填入或上传首帧后，视频生成会按图生视频执行；留空则按文生视频执行。
 	                          </div>
-	                        </Form.Item>
-	                        <Form.Item label="首帧/参考图 URL">
-	                          <Input
-	                            value={(selectedNode.data?.referenceImageUrl as string) || ''}
-	                            onChange={(e) => updateSelectedNodeData({ referenceImageUrl: e.target.value })}
-	                          />
 	                        </Form.Item>
 	                        <Form.Item label="时长(秒)">
 	                          <Input

@@ -3,10 +3,12 @@ package com.paiagent.engine.executor.impl;
 import com.paiagent.dto.ExecutionEvent;
 import com.paiagent.engine.model.WorkflowNode;
 import com.paiagent.service.AgentPlanConfigResolver;
+import com.paiagent.service.AgnesVideoClient;
 import com.paiagent.service.MinioService;
 import com.paiagent.service.ResolvedAgentPlanConfig;
 import com.paiagent.service.VolcengineAgentPlanClient;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
@@ -23,14 +25,24 @@ public class VideoGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
 
     private final AgentPlanConfigResolver configResolver;
     private final VolcengineAgentPlanClient agentPlanClient;
+    private final AgnesVideoClient agnesVideoClient;
     private final MinioService minioService;
+
+    @Autowired
+    public VideoGenerateNodeExecutor(AgentPlanConfigResolver configResolver,
+                                     VolcengineAgentPlanClient agentPlanClient,
+                                     AgnesVideoClient agnesVideoClient,
+                                     MinioService minioService) {
+        this.configResolver = configResolver;
+        this.agentPlanClient = agentPlanClient;
+        this.agnesVideoClient = agnesVideoClient;
+        this.minioService = minioService;
+    }
 
     public VideoGenerateNodeExecutor(AgentPlanConfigResolver configResolver,
                                      VolcengineAgentPlanClient agentPlanClient,
                                      MinioService minioService) {
-        this.configResolver = configResolver;
-        this.agentPlanClient = agentPlanClient;
-        this.minioService = minioService;
+        this(configResolver, agentPlanClient, new AgnesVideoClient(), minioService);
     }
 
     @Override
@@ -56,27 +68,42 @@ public class VideoGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
         ResolvedAgentPlanConfig config = configResolver.resolve(node, "video");
         configResolver.validateApiConfig(config, "视频生成");
 
-        emit(node, progressCallback, "视频任务提交中", Map.of("model", config.model()));
-        String taskId = agentPlanClient.createVideoTask(
+        boolean agnesProvider = isAgnesProvider(config.provider());
+        int duration = intData(node, "duration", 5);
+        String resolution = stringData(node, "resolution", null);
+        String ratio = stringData(node, "ratio", "adaptive");
+        String cameraMotion = stringData(node, "cameraMotion", null);
+        emit(node, progressCallback, buildSubmitMessage(config, duration, referenceImageUrl), Map.of(
+                "provider", config.provider(),
+                "model", config.model(),
+                "duration", duration,
+                "hasFirstFrame", StringUtils.hasText(referenceImageUrl)
+        ));
+        String taskId = createVideoTask(
+                agnesProvider,
                 config,
                 prompt,
                 referenceImageUrl,
-                intData(node, "duration", 5),
-                stringData(node, "resolution", null),
-                stringData(node, "ratio", "adaptive"),
-                stringData(node, "cameraMotion", null)
+                duration,
+                resolution,
+                ratio,
+                cameraMotion
         );
         if (!StringUtils.hasText(taskId)) {
             throw new IllegalStateException("视频生成接口未返回 taskId");
         }
+        emit(node, progressCallback, "视频任务已提交: taskId=" + shortId(taskId), Map.of("taskId", taskId));
 
         Map<String, Object> task = Map.of("status", "running");
+        long startedAt = System.currentTimeMillis();
         for (int i = 0; i < MAX_POLLS; i++) {
-            emit(node, progressCallback, "视频生成中", Map.of("taskId", taskId, "poll", i + 1));
             Thread.sleep(POLL_INTERVAL_MS);
-            task = agentPlanClient.getVideoTask(config, taskId);
+            task = getVideoTask(agnesProvider, config, taskId);
             String status = String.valueOf(task.getOrDefault("status", ""));
+            emit(node, progressCallback, buildPollingMessage(taskId, i + 1, status, task.get("progress"), startedAt),
+                    buildPollingData(taskId, i + 1, status, task.get("progress"), startedAt));
             if (isSuccess(status)) {
+                emit(node, progressCallback, buildCompleteMessage(taskId, status, task.get("progress")), buildPollingData(taskId, i + 1, status, task.get("progress"), startedAt));
                 break;
             }
             if (isFailed(status)) {
@@ -90,7 +117,7 @@ public class VideoGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
             throw new IllegalStateException("视频生成超时或未返回 videoUrl: " + task);
         }
 
-        emit(node, progressCallback, "视频转存中", Map.of("taskId", taskId));
+        emit(node, progressCallback, "视频转存中: taskId=" + shortId(taskId), Map.of("taskId", taskId, "sourceUrl", videoUrl));
         String persistedVideoUrl = persistMedia(videoUrl, "videos/generated-" + taskId + ".mp4", "video/mp4");
 
         Map<String, Object> output = new LinkedHashMap<>();
@@ -105,6 +132,102 @@ public class VideoGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
         return output;
     }
 
+    private String buildSubmitMessage(ResolvedAgentPlanConfig config, int duration, String referenceImageUrl) {
+        return "视频任务提交中: provider=" + config.provider()
+                + ", model=" + config.model()
+                + ", 时长=" + duration + "s"
+                + ", 首帧=" + (StringUtils.hasText(referenceImageUrl) ? "有" : "无");
+    }
+
+    private String buildPollingMessage(String taskId, int poll, String status, Object progress, long startedAt) {
+        StringBuilder message = new StringBuilder("视频生成中: 第 ")
+                .append(poll)
+                .append("/")
+                .append(MAX_POLLS)
+                .append(" 次查询, 已等待 ")
+                .append(elapsedSeconds(startedAt))
+                .append("s, 状态=")
+                .append(StringUtils.hasText(status) ? status : "unknown");
+        String progressText = formatProgress(progress);
+        if (StringUtils.hasText(progressText)) {
+            message.append(", 进度=").append(progressText);
+        }
+        message.append(", taskId=").append(shortId(taskId));
+        return message.toString();
+    }
+
+    private String buildCompleteMessage(String taskId, String status, Object progress) {
+        StringBuilder message = new StringBuilder("视频生成完成: 状态=")
+                .append(StringUtils.hasText(status) ? status : "completed");
+        String progressText = formatProgress(progress);
+        if (StringUtils.hasText(progressText)) {
+            message.append(", 进度=").append(progressText);
+        }
+        message.append(", taskId=").append(shortId(taskId));
+        return message.toString();
+    }
+
+    private Map<String, Object> buildPollingData(String taskId, int poll, String status, Object progress, long startedAt) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("taskId", taskId);
+        data.put("poll", poll);
+        data.put("maxPolls", MAX_POLLS);
+        data.put("elapsedSeconds", elapsedSeconds(startedAt));
+        data.put("status", status);
+        if (progress != null) {
+            data.put("progress", progress);
+        }
+        return data;
+    }
+
+    private long elapsedSeconds(long startedAt) {
+        return Math.max(0, (System.currentTimeMillis() - startedAt) / 1_000);
+    }
+
+    private String formatProgress(Object progress) {
+        if (progress == null) {
+            return null;
+        }
+        if (progress instanceof Number number) {
+            double value = number.doubleValue();
+            if (value <= 1.0) {
+                value *= 100;
+            }
+            if (Math.abs(value - Math.rint(value)) < 0.0001) {
+                return String.valueOf((int) Math.rint(value)) + "%";
+            }
+            return String.format("%.1f%%", value);
+        }
+        String text = String.valueOf(progress).trim();
+        if (!StringUtils.hasText(text)) {
+            return null;
+        }
+        return text.endsWith("%") ? text : text + "%";
+    }
+
+    private String shortId(String taskId) {
+        if (!StringUtils.hasText(taskId) || taskId.length() <= 16) {
+            return taskId;
+        }
+        return taskId.substring(0, 8) + "..." + taskId.substring(taskId.length() - 6);
+    }
+
+    private String createVideoTask(boolean agnesProvider, ResolvedAgentPlanConfig config, String prompt,
+                                   String referenceImageUrl, int duration, String resolution,
+                                   String ratio, String cameraMotion) throws Exception {
+        if (agnesProvider) {
+            return agnesVideoClient.createVideoTask(config, prompt, referenceImageUrl, duration, resolution, ratio, cameraMotion);
+        }
+        return agentPlanClient.createVideoTask(config, prompt, referenceImageUrl, duration, resolution, ratio, cameraMotion);
+    }
+
+    private Map<String, Object> getVideoTask(boolean agnesProvider, ResolvedAgentPlanConfig config, String taskId) throws Exception {
+        if (agnesProvider) {
+            return agnesVideoClient.getVideoTask(config, taskId);
+        }
+        return agentPlanClient.getVideoTask(config, taskId);
+    }
+
     private boolean isSuccess(String status) {
         String normalized = status.toLowerCase();
         return normalized.contains("success") || normalized.contains("succeed") || normalized.contains("completed");
@@ -113,6 +236,10 @@ public class VideoGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
     private boolean isFailed(String status) {
         String normalized = status.toLowerCase();
         return normalized.contains("fail") || normalized.contains("error") || normalized.contains("cancel");
+    }
+
+    private boolean isAgnesProvider(String provider) {
+        return StringUtils.hasText(provider) && "agnes".equals(provider.trim().toLowerCase());
     }
 
     private String persistMedia(String sourceUrl, String objectName, String contentType) {

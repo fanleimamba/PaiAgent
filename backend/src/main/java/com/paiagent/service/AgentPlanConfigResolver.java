@@ -135,21 +135,16 @@ public class AgentPlanConfigResolver {
     private LLMGlobalConfig resolveAgentPlanConfig(Long explicitAgentPlanConfigId, LLMGlobalConfig nodeGlobalConfig) {
         if (explicitAgentPlanConfigId != null) {
             LLMGlobalConfig explicit = llmGlobalConfigService.getById(explicitAgentPlanConfigId);
-            if (explicit != null && "volcengine_agent_plan".equals(canonicalizeProvider(explicit.getProvider()))) {
+            if (explicit != null) {
                 return explicit;
             }
         }
 
-        if (nodeGlobalConfig != null && "volcengine_agent_plan".equals(canonicalizeProvider(nodeGlobalConfig.getProvider()))) {
+        if (nodeGlobalConfig != null) {
             return nodeGlobalConfig;
         }
 
-        LLMGlobalConfig defaultAgentPlan = llmGlobalConfigService.getDefaultConfig("volcengine_agent_plan");
-        if (defaultAgentPlan != null) {
-            return defaultAgentPlan;
-        }
-
-        return nodeGlobalConfig;
+        return llmGlobalConfigService.getDefaultConfig("volcengine_agent_plan");
     }
 
     public ResolvedAgentPlanConfig resolveKnowledgeConfig(Long configId, String modelOverride) {
@@ -218,6 +213,7 @@ public class AgentPlanConfigResolver {
             case "stepfun", "阶跃星辰" -> "step";
             case "智谱" -> "zhipu";
             case "ai ping" -> "ai_ping";
+            case "agnes", "agnes ai" -> "agnes";
             default -> provider.trim().toLowerCase(Locale.ROOT);
         };
     }

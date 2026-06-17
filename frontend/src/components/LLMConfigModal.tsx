@@ -22,6 +22,7 @@ const PROVIDERS = [
   { value: 'deepseek', label: 'DeepSeek' },
   { value: 'qwen', label: '通义千问' },
   { value: 'step', label: '阶跃星辰' },
+  { value: 'agnes', label: 'Agnes AI' },
   { value: 'apifree', label: 'APIFree / SkyClaw' },
   { value: 'volcengine_agent_plan', label: '火山方舟 Agent Plan' }
 ];
@@ -251,7 +252,7 @@ const LLMConfigModal: React.FC<LLMConfigModalProps> = ({ visible, onClose }) => 
         )}
         {key === 'video' && (
           <Form.Item name="videoModel" label="默认视频模型" rules={[{ required: true, message: '请输入视频模型' }]}>
-            <Input placeholder="例如: seedance 相关视频生成模型" />
+            <Input placeholder="例如: agnes-video-v2.0, seedance 相关视频生成模型" />
           </Form.Item>
         )}
       </div>

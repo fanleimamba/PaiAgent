@@ -67,7 +67,7 @@ public class ChatClientFactory {
                 normalizedProvider, apiUrl, normalizedModel, temperature, functions.size());
 
         ChatModel chatModel = switch (normalizedProvider) {
-            case "openai", "deepseek", "qwen", "step", "zhipu", "ai_ping" ->
+            case "openai", "deepseek", "qwen", "step", "zhipu", "ai_ping", "agnes" ->
                     createOpenAICompatibleModel(apiUrl, apiKey, normalizedModel, temperature);
             case "apifree" ->
                     createApifreeChatModel(apiUrl, apiKey, normalizedModel, temperature);
@@ -227,6 +227,7 @@ public class ChatClientFactory {
             case "stepfun", "阶跃星辰" -> "step";
             case "智谱" -> "zhipu";
             case "ai ping" -> "ai_ping";
+            case "agnes ai" -> "agnes";
             case "api free", "apifree.ai", "skyclaw", "skyclaw-v1", "skyclaw-v1.0",
                  "skyclaw-v1-lite", "skyclaw-v1.0-lite", "skywork-ai/skyclaw-v1",
                  "skywork-ai/skyclaw-v1-lite" -> "apifree";

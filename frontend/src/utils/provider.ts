@@ -15,6 +15,8 @@ const PROVIDER_ALIASES: Record<string, string> = {
   apifree: 'apifree',
   'api free': 'apifree',
   'apifree.ai': 'apifree',
+  agnes: 'agnes',
+  'agnes ai': 'agnes',
   skyclaw: 'apifree',
   'skyclaw-v1': 'apifree',
   'skyclaw-v1.0': 'apifree',
@@ -37,6 +39,7 @@ const PROVIDER_LABELS: Record<string, string> = {
   zhipu: '智谱',
   ai_ping: 'AI Ping',
   apifree: 'APIFree / SkyClaw',
+  agnes: 'Agnes AI',
   volcengine_agent_plan: '火山方舟 Agent Plan',
 };
 
@@ -48,6 +51,7 @@ export const SUPPORTED_LLM_PROVIDERS = [
   'zhipu',
   'ai_ping',
   'apifree',
+  'agnes',
   'volcengine_agent_plan',
 ] as const;
 

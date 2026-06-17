@@ -3,6 +3,7 @@ package com.paiagent.engine.executor.impl;
 import com.paiagent.engine.model.WorkflowNode;
 import com.paiagent.service.AgentPlanConfigResolver;
 import com.paiagent.service.MinioService;
+import com.paiagent.service.OpenAiCompatibleImageClient;
 import com.paiagent.service.ResolvedAgentPlanConfig;
 import com.paiagent.service.StepFunImageClient;
 import com.paiagent.service.VolcengineAgentPlanClient;
@@ -11,6 +12,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -22,15 +24,18 @@ public class ImageGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
     private final AgentPlanConfigResolver configResolver;
     private final VolcengineAgentPlanClient agentPlanClient;
     private final StepFunImageClient stepFunImageClient;
+    private final OpenAiCompatibleImageClient openAiCompatibleImageClient;
     private final MinioService minioService;
 
     public ImageGenerateNodeExecutor(AgentPlanConfigResolver configResolver,
                                      VolcengineAgentPlanClient agentPlanClient,
                                      StepFunImageClient stepFunImageClient,
+                                     OpenAiCompatibleImageClient openAiCompatibleImageClient,
                                      MinioService minioService) {
         this.configResolver = configResolver;
         this.agentPlanClient = agentPlanClient;
         this.stepFunImageClient = stepFunImageClient;
+        this.openAiCompatibleImageClient = openAiCompatibleImageClient;
         this.minioService = minioService;
     }
 
@@ -106,7 +111,15 @@ public class ImageGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
                     seed,
                     textMode
             );
-            default -> throw new IllegalArgumentException("图片生成暂不支持提供商: " + config.provider());
+            default -> openAiCompatibleImageClient.generateImage(
+                    config,
+                    prompt,
+                    referenceImageUrl,
+                    size,
+                    count,
+                    negativePrompt,
+                    style
+            );
         };
     }
 
@@ -124,6 +137,13 @@ public class ImageGenerateNodeExecutor extends AbstractAgentPlanNodeExecutor {
             return sourceUrl;
         }
         try {
+            if (sourceUrl.startsWith("data:image/")) {
+                int commaIndex = sourceUrl.indexOf(',');
+                if (commaIndex > 0) {
+                    byte[] data = Base64.getDecoder().decode(sourceUrl.substring(commaIndex + 1));
+                    return minioService.uploadFromBytes(data, objectName, contentType);
+                }
+            }
             return minioService.uploadFromUrl(sourceUrl, objectName, contentType);
         } catch (Exception e) {
             log.warn("图片转存 MinIO 失败，保留原始 URL: {}", e.getMessage());

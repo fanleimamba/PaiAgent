@@ -50,4 +50,42 @@ class AgentPlanConfigResolverTest {
         assertEquals("step-key", resolved.apiKey());
         assertEquals("step-1x-medium", resolved.model());
     }
+
+    @Test
+    void resolveVideoConfig_UsesSelectedAgnesConfig_WhenAgentPlanDefaultExists() {
+        LLMGlobalConfigService configService = mock(LLMGlobalConfigService.class);
+        AgentPlanConfigResolver resolver = new AgentPlanConfigResolver(configService);
+
+        LLMGlobalConfig agnesConfig = new LLMGlobalConfig();
+        agnesConfig.setId(18L);
+        agnesConfig.setProvider("Agnes AI");
+        agnesConfig.setApiUrl("https://apihub.agnes-ai.com");
+        agnesConfig.setApiKey("agnes-key");
+        agnesConfig.setModel("agnes-2.0-flash");
+        agnesConfig.setVideoModel("agnes-video-v2.0");
+
+        LLMGlobalConfig agentPlanDefault = new LLMGlobalConfig();
+        agentPlanDefault.setId(33L);
+        agentPlanDefault.setProvider("volcengine_agent_plan");
+        agentPlanDefault.setApiUrl("https://ark.cn-beijing.volces.com/api/plan/v3");
+        agentPlanDefault.setApiKey("ark-key");
+        agentPlanDefault.setModel("doubao-model");
+        agentPlanDefault.setVideoModel("seedance-model");
+
+        when(configService.getById(18L)).thenReturn(agnesConfig);
+        when(configService.getDefaultConfig("volcengine_agent_plan")).thenReturn(agentPlanDefault);
+
+        WorkflowNode node = new WorkflowNode();
+        Map<String, Object> data = new HashMap<>();
+        data.put("configId", 18L);
+        node.setData(data);
+
+        ResolvedAgentPlanConfig resolved = resolver.resolve(node, "video");
+
+        assertEquals(18L, resolved.configId());
+        assertEquals("agnes", resolved.provider());
+        assertEquals("https://apihub.agnes-ai.com", resolved.apiUrl());
+        assertEquals("agnes-key", resolved.apiKey());
+        assertEquals("agnes-video-v2.0", resolved.model());
+    }
 }
