@@ -76,4 +76,15 @@ public class ExecutionEvent {
         event.setTimestamp(System.currentTimeMillis());
         return event;
     }
+
+    public static ExecutionEvent tokenStream(String nodeId, String nodeName, String token) {
+        ExecutionEvent event = new ExecutionEvent();
+        event.setEventType("NODE_TOKEN_STREAM");
+        event.setNodeId(nodeId);
+        event.setNodeName(nodeName);
+        event.setStatus("RUNNING");
+        event.setMessage(token);
+        event.setTimestamp(System.currentTimeMillis());
+        return event;
+    }
 }

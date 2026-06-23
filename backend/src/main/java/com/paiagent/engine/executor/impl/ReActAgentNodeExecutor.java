@@ -83,13 +83,27 @@ public class ReActAgentNodeExecutor extends AbstractLLMNodeExecutor {
 
         for (int step = 1; step <= maxSteps; step++) {
             String userPrompt = buildStepPrompt(goalPrompt, input, trace, step, maxSteps);
-            ChatResponse response = chatClient.prompt(new Prompt(List.of(
+
+            // 使用流式调用，逐 token 回调并拼接完整内容
+            StringBuilder contentBuilder = new StringBuilder();
+            ChatResponse lastResponse = chatClient.prompt(new Prompt(List.of(
                     new SystemMessage(systemPrompt),
                     new UserMessage(userPrompt)
-            ))).call().chatResponse();
+            ))).stream().chatResponse()
+                    .doOnNext(chunk -> {
+                        String token = chunk.getResult() != null
+                                && chunk.getResult().getOutput() != null
+                                && chunk.getResult().getOutput().getContent() != null
+                                ? chunk.getResult().getOutput().getContent()
+                                : "";
+                        if (!token.isEmpty()) {
+                            contentBuilder.append(token);
+                            emitTokenStream(node, progressCallback, token);
+                        }
+                    }).blockLast();
 
-            tokenUsage.add(response);
-            String content = response.getResult().getOutput().getContent();
+            tokenUsage.add(lastResponse);
+            String content = contentBuilder.toString();
             AgentDecision decision = parseDecision(content);
 
             Map<String, Object> traceItem = new LinkedHashMap<>();
@@ -279,6 +293,12 @@ public class ReActAgentNodeExecutor extends AbstractLLMNodeExecutor {
                               String message, Map<String, Object> data) {
         if (progressCallback != null) {
             progressCallback.accept(ExecutionEvent.nodeProgress(node.getId(), node.getType(), message, data));
+        }
+    }
+
+    private void emitTokenStream(WorkflowNode node, Consumer<ExecutionEvent> progressCallback, String token) {
+        if (progressCallback != null) {
+            progressCallback.accept(ExecutionEvent.tokenStream(node.getId(), node.getType(), token));
         }
     }
 
